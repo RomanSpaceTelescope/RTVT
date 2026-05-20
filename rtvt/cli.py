@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import html
+import io
 import os
 import sys
 import tempfile
@@ -48,6 +51,9 @@ def main(argv: list[str] | None = None) -> int:
             target_name=args.target_name,
         )
 
+    if args.write_report:
+        write_report(result, args.write_report, target_name=args.target_name)
+
     return 0
 
 
@@ -83,6 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--target-name", help="Optional display name for the target.")
     parser.add_argument("--write-csv", help="Write the sampled visibility table to this CSV path.")
     parser.add_argument("--write-plot", help="Write a static visibility plot to this image path.")
+    parser.add_argument("--write-report", help="Write an HTML visibility report to this path.")
     parser.add_argument("--show-plot", action="store_true", help="Display the static visibility plot.")
     parser.add_argument("--quiet", action="store_true", help="Suppress terminal summary output.")
     parser.add_argument("--version", action="version", version="rtvt 0.1.0")
@@ -251,6 +258,66 @@ def write_plot(result: VisibilityResult, path: str, target_name: str | None = No
 def save_plot_figure(fig, path: str) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=150, bbox_inches="tight")
+
+
+def figure_to_png_bytes(fig, dpi: int = 150, close: bool = False) -> bytes:
+    buffer = io.BytesIO()
+    fig.savefig(buffer, format="png", dpi=dpi, bbox_inches="tight")
+    if close:
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+    return buffer.getvalue()
+
+
+def make_html_report(
+    result: VisibilityResult,
+    target_name: str | None = None,
+    plot_png: bytes | None = None,
+) -> str:
+    title = target_name or result.label
+    windows = summarize_windows(result)
+    sampled = result.table.copy()
+    sampled.insert(0, "time_isot", [time.isot for time in result.sampled_times])
+    if plot_png is None:
+        prepare_matplotlib_file_output()
+        fig = make_plot(result, target_name=target_name)
+        plot_png = figure_to_png_bytes(fig, close=True)
+
+    plot_encoded = base64.b64encode(plot_png).decode("ascii")
+    return f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>RTVT Report - {html.escape(title)}</title>
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 32px; color: #1f2933; }}
+    h1, h2 {{ color: #1e334c; }}
+    pre {{ background: #f4f6f8; padding: 14px; white-space: pre-wrap; }}
+    table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
+    th, td {{ border: 1px solid #ddd; padding: 5px; text-align: left; }}
+    th {{ background: #f4f6f8; }}
+    img {{ max-width: 100%; height: auto; }}
+  </style>
+</head>
+<body>
+  <h1>Roman Target Visibility Tool Report</h1>
+  <h2>Summary</h2>
+  <pre>{html.escape(format_summary(result, target_name=target_name))}</pre>
+  <h2>Visibility Plot</h2>
+  <img src="data:image/png;base64,{plot_encoded}">
+  <h2>Observable Windows</h2>
+  {windows.to_html(index=False) if not windows.empty else "<p>No observable windows found.</p>"}
+  <h2>Sampled Data</h2>
+  {sampled.to_html(index=True)}
+</body>
+</html>
+"""
+
+
+def write_report(result: VisibilityResult, path: str, target_name: str | None = None) -> None:
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(make_html_report(result, target_name=target_name), encoding="utf-8")
 
 
 def make_plot(result: VisibilityResult, target_name: str | None = None):

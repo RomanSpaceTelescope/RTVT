@@ -108,8 +108,11 @@ class RTVTGui(tk.Tk):
         ttk.Button(controls, text="Save Plot", command=self.save_plot).grid(
             row=11, column=0, columnspan=2, sticky="ew", pady=4
         )
-        ttk.Button(controls, text="Copy CLI Command", command=self.copy_cli_command).grid(
+        ttk.Button(controls, text="Save Report", command=self.save_report).grid(
             row=12, column=0, columnspan=2, sticky="ew", pady=4
+        )
+        ttk.Button(controls, text="Copy CLI Command", command=self.copy_cli_command).grid(
+            row=13, column=0, columnspan=2, sticky="ew", pady=4
         )
 
         self.coordinate_help_label = ttk.Label(
@@ -117,7 +120,7 @@ class RTVTGui(tk.Tk):
             wraplength=260,
             foreground="#4f5b66",
         )
-        self.coordinate_help_label.grid(row=13, column=0, columnspan=2, sticky="w", pady=(18, 0))
+        self.coordinate_help_label.grid(row=14, column=0, columnspan=2, sticky="w", pady=(18, 0))
         self._update_coordinate_labels()
 
         main = ttk.Frame(self, padding=(0, 14, 14, 14))
@@ -413,11 +416,35 @@ class RTVTGui(tk.Tk):
             f"--duration-days {duration} "
             f"--sampling-days {sampling} "
             "--write-csv visibility.csv "
-            "--write-plot visibility.png"
+            "--write-plot visibility.png "
+            "--write-report visibility_report.html"
         )
         self.clipboard_clear()
         self.clipboard_append(command)
         self.status_var.set("Copied CLI command to clipboard.")
+
+    def save_report(self) -> None:
+        if self.result is None:
+            messagebox.showinfo("No result", "Compute visibility before saving a report.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Save RTVT report",
+            defaultextension=".html",
+            filetypes=[("HTML files", "*.html"), ("All files", "*.*")],
+            initialfile="visibility_report.html",
+        )
+        if not path:
+            return
+
+        from rtvt.cli import figure_to_png_bytes, make_html_report
+
+        plot_png = figure_to_png_bytes(self.figure) if self.figure is not None else None
+        target_name = self.target_name_var.get().strip() or self.result.label
+        Path(path).write_text(
+            make_html_report(self.result, target_name=target_name, plot_png=plot_png),
+            encoding="utf-8",
+        )
+        self.status_var.set(f"Saved report: {Path(path).name}")
 
 
 def main(argv: list[str] | None = None) -> int:

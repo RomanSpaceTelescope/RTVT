@@ -13,6 +13,8 @@ notebook after enabling an interactive matplotlib backend, for example:
 from __future__ import annotations
 
 import base64
+from datetime import datetime
+import html
 import io
 import os
 import tempfile
@@ -67,15 +69,16 @@ def target_color(index):
     return TARGET_COLORS[index % len(TARGET_COLORS)]
 
 
-def figure_png_bytes(fig, dpi=120):
+def figure_png_bytes(fig, dpi=120, close=True):
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
-    plt.close(fig)
+    if close:
+        plt.close(fig)
     return buf.getvalue()
 
 
-def figure_img_html(fig, dpi=120):
-    png = figure_png_bytes(fig, dpi=dpi)
+def figure_img_html(fig, dpi=120, close=True):
+    png = figure_png_bytes(fig, dpi=dpi, close=close)
     encoded = base64.b64encode(png).decode("ascii")
     return f'<img src="data:image/png;base64,{encoded}" style="max-width: 100%; height: auto;">'
 
@@ -328,6 +331,8 @@ def launch_interactive_sky_gantt(
         figsize=(12, 6),
         subplot_kw=dict(projection="mollweide"),
     )
+    if hasattr(fig_sky.canvas, "toolbar_position"):
+        fig_sky.canvas.toolbar_position = "bottom"
 
     pcm = ax_sky.pcolormesh(
         ra_plot_mesh,
@@ -372,11 +377,58 @@ def launch_interactive_sky_gantt(
         value=f"Click on the sky map to select targets in {coordinate_title} coordinates."
     )
     plots_output = widgets.HTML()
+    report_button = widgets.Button(
+        description="Create report",
+        button_style="success",
+        tooltip="Write an HTML report with the selected targets and current plots.",
+        layout=widgets.Layout(width="160px"),
+    )
+    report_status = widgets.HTML()
     rendered_plots = {"latest": "", "gantt": "", "comparison": ""}
 
     selected_targets = []
     selected_markers = []
     selected_number_labels = []
+
+    manual_lon = widgets.Text(
+        description=f"{lon_label}:",
+        placeholder="decimal degrees",
+        layout=widgets.Layout(width="220px"),
+        style={"description_width": "42px"},
+    )
+    manual_lat = widgets.Text(
+        description=f"{lat_label}:",
+        placeholder="decimal degrees",
+        layout=widgets.Layout(width="220px"),
+        style={"description_width": "42px"},
+    )
+    manual_button = widgets.Button(
+        description="Compute",
+        button_style="primary",
+        tooltip="Compute visibility for the typed coordinates.",
+        layout=widgets.Layout(width="220px"),
+    )
+    manual_status = widgets.HTML()
+    manual_panel = widgets.VBox(
+        [
+            widgets.HTML(
+                f"<b>Exact {html.escape(coordinate_title)} coordinates</b>"
+                "<br><span style='font-size: 12px; color: #666;'>"
+                "Enter decimal-degree coordinates, or click the map."
+                "</span>"
+            ),
+            manual_lon,
+            manual_lat,
+            manual_button,
+            manual_status,
+        ],
+        layout=widgets.Layout(
+            width="255px",
+            border="1px solid #d6d6d6",
+            padding="10px",
+            margin="0 12px 0 0",
+        ),
+    )
 
     def _plot_section(title, image_html):
         return (
@@ -392,6 +444,93 @@ def launch_interactive_sky_gantt(
             for key in ("latest", "gantt", "comparison")
             if rendered_plots[key]
         )
+
+    def _map_radians(lon_deg, lat_deg):
+        plot_lon = lon_deg - 360.0 if lon_deg > 180.0 else lon_deg
+        return np.deg2rad(plot_lon), np.deg2rad(lat_deg)
+
+    def _target_rows_html():
+        if not selected_targets:
+            return "<p>No selected targets yet.</p>"
+
+        rows = []
+        for i, item in enumerate(selected_targets, start=1):
+            target_icrs = SkyCoord(
+                ra=item["ra_deg"] * u.deg,
+                dec=item["dec_deg"] * u.deg,
+                frame="icrs",
+            )
+            rows.append(
+                "<tr>"
+                f"<td>{i}</td>"
+                f"<td><span style='color:{item['color']}; font-weight: 700;'>"
+                f"{html.escape(item['display_label'])}</span></td>"
+                f"<td>{item['ra_deg']:.6f}</td>"
+                f"<td>{item['dec_deg']:.6f}</td>"
+                f"<td>{target_icrs.galactic.l.deg:.6f}</td>"
+                f"<td>{target_icrs.galactic.b.deg:.6f}</td>"
+                f"<td>{item['vis_fraction'] * 100:.1f}%</td>"
+                f"<td>{'Yes' if item['is_cvz'] else 'No'}</td>"
+                "</tr>"
+            )
+
+        return (
+            "<table style='border-collapse: collapse; width: 100%;'>"
+            "<thead><tr>"
+            "<th>#</th><th>Input coordinates</th><th>RA deg</th><th>Dec deg</th>"
+            "<th>Galactic l deg</th><th>Galactic b deg</th>"
+            "<th>Visible fraction</th><th>CVZ flag</th>"
+            "</tr></thead><tbody>"
+            + "".join(rows)
+            + "</tbody></table>"
+            "<style>th,td{border:1px solid #ddd;padding:6px;text-align:left;}th{background:#f4f6f8;}</style>"
+        )
+
+    def _create_report(_event=None):
+        if not selected_targets:
+            report_status.value = "<span style='color:#b00020;'>Select at least one target first.</span>"
+            return
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        report_path = Path.cwd() / f"rtvt_visibility_report_{timestamp}.html"
+        plot_sections = "\n".join(
+            rendered_plots[key]
+            for key in ("latest", "gantt", "comparison")
+            if rendered_plots[key]
+        )
+        sky_snapshot = _plot_section("All-Sky Selection Map", figure_img_html(fig_sky, close=False))
+        report_html = f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>RTVT Visibility Report</title>
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 32px; color: #1f2933; }}
+    h1, h2, h3 {{ color: #1e334c; }}
+    .meta {{ color: #53606d; margin-bottom: 18px; }}
+    section {{ margin-top: 22px; }}
+  </style>
+</head>
+<body>
+  <h1>Roman Target Visibility Tool Report</h1>
+  <div class="meta">
+    Generated {html.escape(datetime.now().isoformat(timespec="seconds"))}<br>
+    Coordinate system: {html.escape(coordinate_title)}<br>
+    Duration: {duration_days:g} days; sampling: {sampling_days:g} day(s)
+  </div>
+  <section>
+    <h2>Selected Targets</h2>
+    {_target_rows_html()}
+  </section>
+  {sky_snapshot}
+  {plot_sections}
+</body>
+</html>
+"""
+        report_path.write_text(report_html, encoding="utf-8")
+        report_status.value = f"Report saved: <code>{html.escape(str(report_path))}</code>"
+
+    report_button.on_click(_create_report)
 
     def _render_latest_visibility(
         display_label,
@@ -575,28 +714,14 @@ def launch_interactive_sky_gantt(
         )
         _update_plots_output()
 
-    def on_sky_click(event):
-        if event.inaxes is not ax_sky or event.xdata is None:
-            return
-
-        lon_rad = event.xdata
-        lat_rad = event.ydata
-
-        lon_deg = np.degrees(lon_rad)
-        if lon_deg < 0:
-            lon_deg += 360.0
-        lat_deg = np.degrees(lat_rad)
-
-        lon_deg = np.clip(lon_deg, 0, 360)
-        lat_deg = np.clip(lat_deg, -90, 90)
-        display_label = format_display_coordinate(lon_deg, lat_deg, coordinate_system)
-
+    def _add_target(tgt_click, lon_deg, lat_deg, map_lon_rad, map_lat_rad):
+        display_label = format_display_coordinate(lon_deg, lat_deg, coordinate_system, precision=4)
         status_label.value = f"Computing visibility for {display_label}..."
-
+        manual_status.value = ""
+        report_status.value = ""
         t0 = _normalize_start_time(start_time)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", AstropyWarning)
-            tgt_click = skycoord_from_lon_lat(lon_deg, lat_deg, coordinate_system)
             vis = compute_visibility(
                 tgt_click,
                 report=False,
@@ -621,8 +746,8 @@ def launch_interactive_sky_gantt(
         target_number = len(selected_targets) + 1
         marker_color = target_color(target_number - 1)
         marker, = ax_sky.plot(
-            [lon_rad],
-            [lat_rad],
+            [map_lon_rad],
+            [map_lat_rad],
             marker="x",
             linestyle="None",
             color=marker_color,
@@ -631,8 +756,8 @@ def launch_interactive_sky_gantt(
             zorder=10,
         )
         number_label = ax_sky.text(
-            lon_rad,
-            lat_rad,
+            map_lon_rad,
+            map_lat_rad,
             f" {target_number}",
             color=marker_color,
             fontsize=10,
@@ -683,17 +808,60 @@ def launch_interactive_sky_gantt(
             f"{'CVZ' if is_cvz else 'not CVZ'}"
         )
 
+    def _compute_manual_target(_event=None):
+        try:
+            lon_deg = float(manual_lon.value)
+            lat_deg = float(manual_lat.value)
+        except ValueError:
+            manual_status.value = "<span style='color:#b00020;'>Enter numeric decimal-degree coordinates.</span>"
+            return
+
+        if not -90.0 <= lat_deg <= 90.0:
+            manual_status.value = "<span style='color:#b00020;'>Latitude must be between -90 and +90 degrees.</span>"
+            return
+
+        lon_deg = lon_deg % 360.0
+        map_lon_rad, map_lat_rad = _map_radians(lon_deg, lat_deg)
+        tgt_manual = skycoord_from_lon_lat(lon_deg, lat_deg, coordinate_system)
+        _add_target(tgt_manual, lon_deg, lat_deg, map_lon_rad, map_lat_rad)
+
+    def on_sky_click(event):
+        if event.inaxes is not ax_sky or event.xdata is None:
+            return
+
+        lon_rad = event.xdata
+        lat_rad = event.ydata
+
+        lon_deg = np.degrees(lon_rad)
+        if lon_deg < 0:
+            lon_deg += 360.0
+        lat_deg = np.degrees(lat_rad)
+
+        lon_deg = float(np.clip(lon_deg, 0, 360))
+        lat_deg = float(np.clip(lat_deg, -90, 90))
+        tgt_click = skycoord_from_lon_lat(lon_deg, lat_deg, coordinate_system)
+        _add_target(tgt_click, lon_deg, lat_deg, lon_rad, lat_rad)
+
+    manual_button.on_click(_compute_manual_target)
     fig_sky.canvas.mpl_connect("button_press_event", on_sky_click)
 
-    plt.show()
+    map_box = widgets.HBox(
+        [manual_panel, fig_sky.canvas],
+        layout=widgets.Layout(align_items="flex-start"),
+    )
+    display(map_box)
     display(status_label)
     display(plots_output)
+    display(widgets.HBox([report_button, report_status], layout=widgets.Layout(margin="12px 0 0 0")))
 
     return {
         "fig_sky": fig_sky,
         "ax_sky": ax_sky,
         "status_label": status_label,
+        "manual_panel": manual_panel,
         "plots_output": plots_output,
+        "report_button": report_button,
+        "report_status": report_status,
         "selected_targets": selected_targets,
         "selected_markers": selected_markers,
         "selected_number_labels": selected_number_labels,

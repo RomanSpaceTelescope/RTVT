@@ -3,7 +3,7 @@ from astropy.coordinates import SkyCoord
 from astropy.time import Time
 
 from rtvt import compute_visibility
-from rtvt.cli import build_parser, format_summary, parse_target, run_visibility, summarize_windows
+from rtvt.cli import build_parser, format_summary, parse_target, run_visibility, summarize_windows, write_report
 
 
 def test_compute_visibility_returns_expected_columns():
@@ -55,6 +55,30 @@ def test_cli_summary_and_windows_smoke():
         "nominal_roll_start",
         "nominal_roll_end",
     }
+
+
+def test_html_report_smoke(tmp_path):
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "--ra",
+            "90.0",
+            "--dec",
+            "-1.0",
+            "--start-date",
+            "2024-01-01",
+            "--duration-days",
+            "5",
+        ]
+    )
+    result = run_visibility(args)
+    path = tmp_path / "visibility_report.html"
+    write_report(result, str(path), target_name="report smoke")
+
+    text = path.read_text()
+    assert "Roman Target Visibility Tool Report" in text
+    assert "report smoke" in text
+    assert "data:image/png;base64" in text
 
 
 def test_galactic_coordinate_input_smoke():

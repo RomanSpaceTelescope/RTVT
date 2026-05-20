@@ -49,10 +49,12 @@ rtvt --ra 90.0 --dec -1.0 \
   --start-date 2024-01-01 \
   --duration-days 5 \
   --write-csv visibility.csv \
-  --write-plot visibility.png
+  --write-plot visibility.png \
+  --write-report visibility_report.html
 ```
 
-That creates `visibility.csv` and `visibility.png` in the current directory.
+That creates `visibility.csv`, `visibility.png`, and `visibility_report.html`
+in the current directory.
 
 To open the plot from the command line as well:
 
@@ -141,7 +143,8 @@ rtvt --ra 253.2458 --dec 2.4008 \
   --start-date 2026-01-01 \
   --duration-days 365 \
   --write-csv visibility.csv \
-  --write-plot visibility.png
+  --write-plot visibility.png \
+  --write-report visibility_report.html
 ```
 
 RA may be provided in decimal degrees or sexagesimal hour angle. Dec may be
@@ -165,7 +168,7 @@ The GUI provides:
 - visibility and Sun-target separation plots
 - observable-window table
 - sampled-data preview
-- save buttons for CSV and PNG/PDF plot output
+- save buttons for CSV, PNG/PDF plot output, and an HTML report
 - a button to copy the equivalent CLI command
 
 The GUI opens as a normal desktop window. Close the window when you are done.
@@ -204,9 +207,10 @@ viewer = launch_interactive_sky_gantt_with_controls(
 
 The notebook [Run_viz_tool_interactive_gantt.ipynb](Run_viz_tool_interactive_gantt.ipynb)
 is the current demo entry point. It includes an Equatorial/Galactic selector,
-the latest target visibility and attitude diagnostic plots, a cumulative Gantt
-chart with the latest target highlighted, and a multi-target Sun-separation
-comparison plot.
+an exact coordinate-entry panel next to the all-sky map, the latest target
+visibility plot, a cumulative Gantt chart with the latest target highlighted,
+a multi-target Sun-separation comparison plot, and an HTML report button for
+the current selected-target state.
 
 ## Relationship to JWST GTVT
 
