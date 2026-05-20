@@ -57,6 +57,7 @@ Repository = "https://github.com/shahbandeh/RTVT"
 [project.scripts]
 rtvt = "rtvt.cli:main"
 roman_tvt = "rtvt.cli:main"
+rtvt-gui = "rtvt.gui:main"
 
 [tool.setuptools]
 packages = ["rtvt"]

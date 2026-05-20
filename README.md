@@ -11,6 +11,7 @@ Current capabilities include:
 - Sun-target separation and in/out-of-field-of-regard sampling
 - Nominal roll and focal-plane position-angle quantities
 - Static command-line summaries, CSV output, and visibility plots
+- A desktop pop-up GUI for coordinate entry, summaries, plots, tables, and exports
 - An interactive notebook sky selector with cumulative Gantt-style visibility windows
 - A Plotly 3D Sun-track helper for geometry exploration
 
@@ -36,6 +37,7 @@ Verify the install:
 rtvt --version
 rtvt --help
 rtvt --ra 90.0 --dec -1.0 --start-date 2024-01-01 --duration-days 5
+rtvt-gui
 ```
 
 Test file outputs:
@@ -131,6 +133,27 @@ rtvt --ra 253.2458 --dec 2.4008 \
 
 RA may be provided in decimal degrees or sexagesimal hour angle. Dec may be
 provided in decimal degrees or sexagesimal degrees.
+
+## GUI Usage
+
+RTVT includes a desktop pop-up GUI for demos and exploratory target checks.
+Launch it from an environment where RTVT is installed:
+
+```bash
+rtvt-gui
+```
+
+The GUI provides:
+
+- RA/Dec, start date, duration, and sampling inputs
+- terminal-style summary output
+- visibility and Sun-target separation plots
+- observable-window table
+- sampled-data preview
+- save buttons for CSV and PNG/PDF plot output
+- a button to copy the equivalent CLI command
+
+The GUI opens as a normal desktop window. Close the window when you are done.
 
 ## Python API
 
