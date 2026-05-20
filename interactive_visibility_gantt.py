@@ -308,16 +308,6 @@ def launch_interactive_sky_gantt(
             coordinate_system=coordinate_system,
         )
 
-    if test_targets is None:
-        test_targets = [
-            SkyCoord("06h00m00s", "-01d00m00s", frame="icrs"),
-            SkyCoord("08h00m00s", "60d00m00s", frame="icrs"),
-            SkyCoord("08h00m00s", "-60d00m00s", frame="icrs"),
-            SkyCoord("17h45m40s", "-29d00m28s", frame="icrs"),
-            SkyCoord("09h00m00s", "89d00m00s", frame="icrs"),
-            SkyCoord("09h00m00s", "-89d00m00s", frame="icrs"),
-        ]
-
     ra_shifted = np.where(ra_grid > 180, ra_grid - 360, ra_grid)
     sort_idx = np.argsort(ra_shifted)
     ra_sorted_deg = ra_shifted[sort_idx]
@@ -327,10 +317,11 @@ def launch_interactive_sky_gantt(
     dec_plot = np.deg2rad(dec_grid)
     ra_plot_mesh, dec_plot_mesh = np.meshgrid(ra_plot, dec_plot)
 
-    fig_sky, ax_sky = plt.subplots(
-        figsize=(12, 6),
-        subplot_kw=dict(projection="mollweide"),
-    )
+    with plt.ioff():
+        fig_sky, ax_sky = plt.subplots(
+            figsize=(12, 6),
+            subplot_kw=dict(projection="mollweide"),
+        )
     if hasattr(fig_sky.canvas, "toolbar_position"):
         fig_sky.canvas.toolbar_position = "bottom"
 
@@ -352,18 +343,21 @@ def launch_interactive_sky_gantt(
     )
     cbar.set_label("Visibility Fraction (of year)")
 
-    for tgt in test_targets:
-        tgt_lon, tgt_lat = display_lon_lat(tgt, coordinate_system)
-        tgt_ra_plot = np.deg2rad(tgt_lon - 360 if tgt_lon > 180 else tgt_lon)
-        tgt_dec_plot = np.deg2rad(tgt_lat)
-        ax_sky.plot(
-            tgt_ra_plot,
-            tgt_dec_plot,
-            "w*",
-            markersize=10,
-            markeredgecolor="black",
-            markeredgewidth=0.5,
-        )
+    if test_targets:
+        for tgt in test_targets:
+            tgt_lon, tgt_lat = display_lon_lat(tgt, coordinate_system)
+            tgt_ra_plot = np.deg2rad(tgt_lon - 360 if tgt_lon > 180 else tgt_lon)
+            tgt_dec_plot = np.deg2rad(tgt_lat)
+            ax_sky.plot(
+                tgt_ra_plot,
+                tgt_dec_plot,
+                marker="x",
+                linestyle="None",
+                color="#222222",
+                markersize=8,
+                markeredgewidth=1.5,
+                alpha=0.75,
+            )
 
     ax_sky.set_title(
         f"All-Sky Visibility Fraction ({coordinate_title}) -- Click to Select Targets",
