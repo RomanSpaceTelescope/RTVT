@@ -204,8 +204,9 @@ viewer = launch_interactive_sky_gantt_with_controls(
 
 The notebook [Run_viz_tool_interactive_gantt.ipynb](Run_viz_tool_interactive_gantt.ipynb)
 is the current demo entry point. It includes an Equatorial/Galactic selector,
-the latest target visibility plot, a cumulative Gantt chart with the latest
-target highlighted, and a multi-target Sun-separation comparison plot.
+the latest target visibility and attitude diagnostic plots, a cumulative Gantt
+chart with the latest target highlighted, and a multi-target Sun-separation
+comparison plot.
 
 ## Relationship to JWST GTVT
 

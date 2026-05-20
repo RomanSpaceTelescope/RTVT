@@ -47,6 +47,26 @@ import matplotlib.pyplot as plt
 from matplotlib.dates import DateFormatter, MonthLocator, date2num
 
 
+TARGET_COLORS = [
+    "#1b9e77",  # teal
+    "#d95f02",  # orange
+    "#7570b3",  # purple
+    "#e7298a",  # magenta
+    "#66a61e",  # green
+    "#e6ab02",  # gold
+    "#a6761d",  # brown
+    "#1f78b4",  # blue
+    "#b2df8a",  # light green
+    "#666666",  # gray
+]
+
+_SKY_GRID_CACHE = {}
+
+
+def target_color(index):
+    return TARGET_COLORS[index % len(TARGET_COLORS)]
+
+
 def to_deg(series):
     """Convert a pandas Series of astropy Quantities or floats to degrees."""
     return np.array(
@@ -194,11 +214,45 @@ def compute_all_sky_visibility_grid(
         vis_sky.get_good_angles()
 
     vis_frac = np.zeros(len(sky_points))
-    for i, label in enumerate(vis_sky.df_results.index.levels[0]):
+    for i, label in enumerate(vis_sky.target_labels):
         df_pt = vis_sky.df_results.xs(label, level=0)
         vis_frac[i] = df_pt["good_angles"].astype(bool).mean()
 
     return np.asarray(ra_grid), np.asarray(dec_grid), vis_frac.reshape(ra_mesh.shape)
+
+
+def get_cached_all_sky_visibility_grid(
+    grid_step_deg=10,
+    start_time=None,
+    duration_days=365,
+    sampling_days=1,
+    coordinate_system="equatorial",
+):
+    """
+    Cache default notebook sky maps inside the active Python kernel.
+
+    The first map still performs the visibility calculation; rerunning the cell
+    or switching back to a frame reuses the cached grid for the same settings.
+    """
+    coordinate_system = normalize_coordinate_system(coordinate_system)
+    t0 = _normalize_start_time(start_time)
+    start_key = "default" if t0 is None else t0.isot
+    key = (
+        coordinate_system,
+        float(grid_step_deg),
+        start_key,
+        float(duration_days),
+        float(sampling_days),
+    )
+    if key not in _SKY_GRID_CACHE:
+        _SKY_GRID_CACHE[key] = compute_all_sky_visibility_grid(
+            grid_step_deg=grid_step_deg,
+            start_time=t0,
+            duration_days=duration_days,
+            sampling_days=sampling_days,
+            coordinate_system=coordinate_system,
+        )
+    return _SKY_GRID_CACHE[key]
 
 
 def launch_interactive_sky_gantt(
@@ -222,7 +276,15 @@ def launch_interactive_sky_gantt(
     coordinate_system = normalize_coordinate_system(coordinate_system)
     lon_label, lat_label, coordinate_title = coordinate_labels(coordinate_system)
 
-    if ra_grid is None or dec_grid is None or vis_frac_2d is None:
+    if ra_grid is None and dec_grid is None and vis_frac_2d is None:
+        ra_grid, dec_grid, vis_frac_2d = get_cached_all_sky_visibility_grid(
+            grid_step_deg=grid_step_deg,
+            start_time=start_time,
+            duration_days=duration_days,
+            sampling_days=sampling_days,
+            coordinate_system=coordinate_system,
+        )
+    elif ra_grid is None or dec_grid is None or vis_frac_2d is None:
         ra_grid, dec_grid, vis_frac_2d = compute_all_sky_visibility_grid(
             ra_grid=ra_grid,
             dec_grid=dec_grid,
@@ -300,6 +362,7 @@ def launch_interactive_sky_gantt(
         value=f"Click on the sky map to select targets in {coordinate_title} coordinates."
     )
     vis_output = widgets.Output()
+    detail_output = widgets.Output()
     gantt_output = widgets.Output()
     comparison_output = widgets.Output()
 
@@ -307,12 +370,21 @@ def launch_interactive_sky_gantt(
     selected_markers = []
     selected_number_labels = []
 
-    def _render_latest_visibility(display_label, radec_label, dates_vis, good, separation, vis_fraction, is_cvz):
+    def _render_latest_visibility(
+        display_label,
+        radec_label,
+        dates_vis,
+        good,
+        separation,
+        vis_fraction,
+        is_cvz,
+        color,
+    ):
         fig_v, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 6), sharex=True)
 
         title_suffix = " [CVZ]" if is_cvz else ""
 
-        ax1.step(dates_vis, good.astype(int), where="mid", lw=1.5, color="#1f77b4")
+        ax1.step(dates_vis, good.astype(int), where="mid", lw=1.8, color=color)
         ax1.set_yticks([0, 1])
         ax1.set_yticklabels(["Not in FOR", "In FOR"])
         ax1.set_ylim(-0.1, 1.1)
@@ -323,7 +395,7 @@ def launch_interactive_sky_gantt(
         )
         ax1.grid(alpha=0.3)
 
-        ax2.plot(dates_vis, separation, lw=1.5, color="#1f77b4")
+        ax2.plot(dates_vis, separation, lw=1.8, color=color)
         ax2.axhline(54, ls="--", color="green", lw=1, label="Min (54 deg)")
         ax2.axhline(126, ls="--", color="orange", lw=1, label="Max (126 deg)")
         ax2.fill_between(
@@ -331,7 +403,7 @@ def launch_interactive_sky_gantt(
             54,
             126,
             alpha=0.12,
-            color="blue",
+            color="gray",
             label="Observable range",
         )
         ax2.set_ylabel("Separation (deg)")
@@ -355,16 +427,108 @@ def launch_interactive_sky_gantt(
             clear_output(wait=True)
             display(IPyImage(data=buf.read()))
 
+    def _render_latest_details(display_label, radec_label, dates_vis, item):
+        color = item["color"]
+        fig_d, (ax_roll, ax_sun) = plt.subplots(2, 1, figsize=(11, 6), sharex=True)
+
+        ax_roll.plot(
+            dates_vis,
+            item["nominal_roll"],
+            color=color,
+            lw=1.8,
+            ls="-",
+            label="nominal_roll",
+        )
+        ax_roll.plot(
+            dates_vis,
+            item["pa_obs_y"],
+            color=color,
+            lw=1.4,
+            ls="--",
+            alpha=0.8,
+            label="pa_obs_y",
+        )
+        ax_roll.plot(
+            dates_vis,
+            item["pa_fpa_local_x"],
+            color=color,
+            lw=1.4,
+            ls=":",
+            alpha=0.8,
+            label="pa_fpa_local_x",
+        )
+        ax_roll.plot(
+            dates_vis,
+            item["pa_fpa_local_y"],
+            color=color,
+            lw=1.4,
+            ls="-.",
+            alpha=0.8,
+            label="pa_fpa_local_y",
+        )
+        ax_roll.set_ylabel("Angle (deg)")
+        ax_roll.set_title(f"Roll and Position Angles -- {display_label} ({radec_label})")
+        ax_roll.legend(fontsize=8, loc="upper right")
+        ax_roll.grid(alpha=0.3)
+
+        ax_sun.plot(
+            dates_vis,
+            item["sunang_x"],
+            color=color,
+            lw=1.8,
+            ls="-",
+            label="sunang_x",
+        )
+        ax_sun.plot(
+            dates_vis,
+            item["sunang_y"],
+            color=color,
+            lw=1.4,
+            ls="--",
+            alpha=0.8,
+            label="sunang_y",
+        )
+        ax_sun.plot(
+            dates_vis,
+            item["sunang_z"],
+            color=color,
+            lw=1.4,
+            ls=":",
+            alpha=0.8,
+            label="sunang_z",
+        )
+        ax_sun.set_ylabel("Angle (deg)")
+        ax_sun.set_xlabel("Date")
+        ax_sun.set_title(f"Sun Angles (Observatory Frame) -- {display_label}")
+        ax_sun.legend(fontsize=8, loc="upper right")
+        ax_sun.grid(alpha=0.3)
+
+        ax_sun.xaxis.set_major_locator(MonthLocator())
+        ax_sun.xaxis.set_major_formatter(DateFormatter("%b %d"))
+        for tick in ax_sun.get_xticklabels():
+            tick.set_rotation(45)
+        fig_d.tight_layout()
+
+        buf = io.BytesIO()
+        fig_d.savefig(buf, format="png", dpi=120, bbox_inches="tight")
+        plt.close(fig_d)
+        buf.seek(0)
+
+        with detail_output:
+            clear_output(wait=True)
+            display(IPyImage(data=buf.read()))
+
     def _render_selected_gantt():
         if not selected_targets:
             with gantt_output:
+                clear_output(wait=True)
+            with detail_output:
                 clear_output(wait=True)
             with comparison_output:
                 clear_output(wait=True)
             return
 
         fig_g, ax = plt.subplots(figsize=(13, 0.7 * len(selected_targets) + 1.8))
-        colors = plt.cm.Set2(np.linspace(0, 1, max(len(selected_targets), 1)))
         latest_index = len(selected_targets) - 1
 
         for i, item in enumerate(selected_targets):
@@ -372,8 +536,8 @@ def launch_interactive_sky_gantt(
                 ax.axhspan(
                     i - 0.43,
                     i + 0.43,
-                    color="#fff3a3",
-                    alpha=0.65,
+                    color=item["color"],
+                    alpha=0.16,
                     zorder=0,
                 )
             windows = get_observable_windows(item["good"])
@@ -384,7 +548,7 @@ def launch_interactive_sky_gantt(
                 width = max(date2num(d_end) - date2num(d_start), 0.5)
                 bars.append((date2num(d_start), width))
 
-            facecolor = "#2ca02c" if item["is_cvz"] else colors[i]
+            facecolor = item["color"]
             if bars:
                 ax.broken_barh(
                     bars,
@@ -403,7 +567,7 @@ def launch_interactive_sky_gantt(
                     ha="center",
                     va="center",
                     fontsize=8,
-                    color="crimson",
+                    color=item["color"],
                 )
 
         labels = [
@@ -413,6 +577,8 @@ def launch_interactive_sky_gantt(
         ]
         ax.set_yticks(range(len(selected_targets)))
         ax.set_yticklabels(labels, fontsize=8)
+        for tick, item in zip(ax.get_yticklabels(), selected_targets):
+            tick.set_color(item["color"])
         ax.set_ylim(-0.6, len(selected_targets) - 0.4)
         ax.xaxis.set_major_locator(MonthLocator())
         ax.xaxis.set_major_formatter(DateFormatter("%b %d"))
@@ -441,7 +607,6 @@ def launch_interactive_sky_gantt(
             return
 
         fig_c, ax = plt.subplots(figsize=(13, 5.2))
-        colors = plt.cm.tab10(np.linspace(0, 1, max(len(selected_targets), 1)))
         latest_index = len(selected_targets) - 1
 
         for i, item in enumerate(selected_targets):
@@ -451,8 +616,8 @@ def launch_interactive_sky_gantt(
                 item["dates"],
                 item["separation"],
                 lw=3.0 if is_latest else 1.3,
-                alpha=1.0 if is_latest else 0.65,
-                color="black" if is_latest else colors[i % len(colors)],
+                alpha=1.0 if is_latest else 0.72,
+                color=item["color"],
                 label=label + (" (latest)" if is_latest else ""),
                 zorder=4 if is_latest else 2,
             )
@@ -464,7 +629,7 @@ def launch_interactive_sky_gantt(
             54,
             126,
             alpha=0.12,
-            color="blue",
+            color="gray",
             label="Observable range",
         )
         ax.set_ylabel("Sun-target separation (deg)")
@@ -525,13 +690,20 @@ def launch_interactive_sky_gantt(
         good = df_one["good_angles"].astype(bool).values
         dates_vis = get_dates(df_one)
         separation = to_deg(df_one["separation"])
+        nominal_roll = to_deg(df_one["nominal_roll"])
+        pa_obs_y = to_deg(df_one["pa_obs_y"])
+        pa_fpa_local_x = to_deg(df_one["pa_fpa_local_x"])
+        pa_fpa_local_y = to_deg(df_one["pa_fpa_local_y"])
+        sunang_x = to_deg(df_one["sunang_x"])
+        sunang_y = to_deg(df_one["sunang_y"])
+        sunang_z = to_deg(df_one["sunang_z"])
         is_cvz, vis_fraction, _ = check_cvz_status(
             df_one,
             good_angle_threshold=good_angle_threshold,
         )
 
         target_number = len(selected_targets) + 1
-        marker_color = "limegreen" if is_cvz else "red"
+        marker_color = target_color(target_number - 1)
         marker, = ax_sky.plot(
             [lon_rad],
             [lat_rad],
@@ -569,11 +741,20 @@ def launch_interactive_sky_gantt(
                 dates=dates_vis,
                 good=good,
                 separation=separation,
+                nominal_roll=nominal_roll,
+                pa_obs_y=pa_obs_y,
+                pa_fpa_local_x=pa_fpa_local_x,
+                pa_fpa_local_y=pa_fpa_local_y,
+                sunang_x=sunang_x,
+                sunang_y=sunang_y,
+                sunang_z=sunang_z,
                 is_cvz=bool(is_cvz),
                 vis_fraction=float(vis_fraction),
+                color=marker_color,
             )
         )
 
+        latest_item = selected_targets[-1]
         fig_sky.canvas.draw_idle()
         _render_latest_visibility(
             display_label,
@@ -583,7 +764,9 @@ def launch_interactive_sky_gantt(
             separation,
             vis_fraction,
             is_cvz,
+            marker_color,
         )
+        _render_latest_details(display_label, radec_label, dates_vis, latest_item)
         _render_selected_gantt()
 
         status_label.value = (
@@ -598,6 +781,7 @@ def launch_interactive_sky_gantt(
     plt.show()
     display(status_label)
     display(vis_output)
+    display(detail_output)
     display(gantt_output)
     display(comparison_output)
 
@@ -606,6 +790,7 @@ def launch_interactive_sky_gantt(
         "ax_sky": ax_sky,
         "status_label": status_label,
         "vis_output": vis_output,
+        "detail_output": detail_output,
         "gantt_output": gantt_output,
         "comparison_output": comparison_output,
         "selected_targets": selected_targets,
@@ -648,6 +833,7 @@ def launch_interactive_sky_gantt_with_controls(
     def _launch(_event=None):
         with output:
             clear_output(wait=True)
+            print(f"Preparing {coordinate_selector.value} all-sky map...")
             state["viewer"] = launch_interactive_sky_gantt(
                 grid_step_deg=grid_step_deg,
                 start_time=start_time,
