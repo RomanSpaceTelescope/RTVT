@@ -371,13 +371,27 @@ def launch_interactive_sky_gantt(
     status_label = widgets.Label(
         value=f"Click on the sky map to select targets in {coordinate_title} coordinates."
     )
-    vis_output = widgets.HTML()
-    gantt_output = widgets.HTML()
-    comparison_output = widgets.HTML()
+    plots_output = widgets.HTML()
+    rendered_plots = {"latest": "", "gantt": "", "comparison": ""}
 
     selected_targets = []
     selected_markers = []
     selected_number_labels = []
+
+    def _plot_section(title, image_html):
+        return (
+            '<section style="margin-top: 14px;">'
+            f'<h3 style="margin: 0 0 6px 0; font-size: 16px;">{title}</h3>'
+            f"{image_html}"
+            "</section>"
+        )
+
+    def _update_plots_output():
+        plots_output.value = "\n".join(
+            rendered_plots[key]
+            for key in ("latest", "gantt", "comparison")
+            if rendered_plots[key]
+        )
 
     def _render_latest_visibility(
         display_label,
@@ -428,12 +442,17 @@ def launch_interactive_sky_gantt(
             tick.set_rotation(45)
         fig_v.tight_layout()
 
-        vis_output.value = figure_img_html(fig_v)
+        rendered_plots["latest"] = _plot_section(
+            "Latest Target Visibility",
+            figure_img_html(fig_v),
+        )
+        _update_plots_output()
 
     def _render_selected_gantt():
         if not selected_targets:
-            gantt_output.value = ""
-            comparison_output.value = ""
+            rendered_plots["gantt"] = ""
+            rendered_plots["comparison"] = ""
+            _update_plots_output()
             return
 
         with plt.ioff():
@@ -498,13 +517,18 @@ def launch_interactive_sky_gantt(
         ax.grid(axis="x", alpha=0.3)
         fig_g.tight_layout()
 
-        gantt_output.value = figure_img_html(fig_g)
+        rendered_plots["gantt"] = _plot_section(
+            "Selected-Target Visibility Gantt",
+            figure_img_html(fig_g),
+        )
+        _update_plots_output()
 
         _render_selected_separation_comparison()
 
     def _render_selected_separation_comparison():
         if not selected_targets:
-            comparison_output.value = ""
+            rendered_plots["comparison"] = ""
+            _update_plots_output()
             return
 
         with plt.ioff():
@@ -545,7 +569,11 @@ def launch_interactive_sky_gantt(
             tick.set_rotation(45)
         fig_c.tight_layout()
 
-        comparison_output.value = figure_img_html(fig_c)
+        rendered_plots["comparison"] = _plot_section(
+            "All-Target Sun-Target Separation Comparison",
+            figure_img_html(fig_c),
+        )
+        _update_plots_output()
 
     def on_sky_click(event):
         if event.inaxes is not ax_sky or event.xdata is None:
@@ -659,17 +687,13 @@ def launch_interactive_sky_gantt(
 
     plt.show()
     display(status_label)
-    display(vis_output)
-    display(gantt_output)
-    display(comparison_output)
+    display(plots_output)
 
     return {
         "fig_sky": fig_sky,
         "ax_sky": ax_sky,
         "status_label": status_label,
-        "vis_output": vis_output,
-        "gantt_output": gantt_output,
-        "comparison_output": comparison_output,
+        "plots_output": plots_output,
         "selected_targets": selected_targets,
         "selected_markers": selected_markers,
         "selected_number_labels": selected_number_labels,
