@@ -50,6 +50,29 @@ rtvt --ra 90.0 --dec -1.0 \
 
 That creates `visibility.csv` and `visibility.png` in the current directory.
 
+To open the plot from the command line as well:
+
+```bash
+rtvt --ra 90.0 --dec -1.0 \
+  --start-date 2024-01-01 \
+  --duration-days 365 \
+  --show-plot
+```
+
+To save and show the same plot:
+
+```bash
+rtvt --ra 90.0 --dec -1.0 \
+  --start-date 2024-01-01 \
+  --duration-days 365 \
+  --write-plot visibility.png \
+  --show-plot
+```
+
+When `--show-plot` opens a Matplotlib window, close the window to return to the
+terminal prompt. On systems without an interactive Matplotlib backend, RTVT will
+still save plots with `--write-plot`.
+
 ### Install Directly from GitHub
 
 Once the repository is public, install the latest version from `main`:

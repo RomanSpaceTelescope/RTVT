@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,15 +39,13 @@ def main(argv: list[str] | None = None) -> int:
     if not args.quiet:
         print(format_summary(result, target_name=args.target_name))
 
-    if args.write_plot:
-        write_plot(result, args.write_plot, target_name=args.target_name)
-
-    if args.show_plot:
-        import matplotlib.pyplot as plt
-
-        fig = make_plot(result, target_name=args.target_name)
-        plt.show()
-        plt.close(fig)
+    if args.write_plot or args.show_plot:
+        handle_plot(
+            result,
+            write_path=args.write_plot,
+            show=args.show_plot,
+            target_name=args.target_name,
+        )
 
     return 0
 
@@ -170,6 +169,42 @@ def write_csv(result: VisibilityResult, path: str) -> None:
     output.to_csv(path, index=True)
 
 
+def handle_plot(
+    result: VisibilityResult,
+    write_path: str | None = None,
+    show: bool = False,
+    target_name: str | None = None,
+) -> None:
+    if not show and write_path:
+        write_plot(result, write_path, target_name=target_name)
+        return
+
+    prepare_matplotlib_file_output()
+
+    import matplotlib
+    import matplotlib.pyplot as plt
+
+    fig = make_plot(result, target_name=target_name)
+
+    if write_path:
+        save_plot_figure(fig, write_path)
+
+    if show:
+        backend = matplotlib.get_backend()
+        if _matplotlib_backend_can_show(backend):
+            plt.show()
+        else:
+            print(
+                "Plot display skipped because Matplotlib is using the "
+                f"non-interactive '{backend}' backend. "
+                "Use --write-plot to save the figure, or run from a terminal "
+                "with an interactive Matplotlib backend.",
+                file=sys.stderr,
+            )
+
+    plt.close(fig)
+
+
 def write_plot(result: VisibilityResult, path: str, target_name: str | None = None) -> None:
     prepare_matplotlib_file_output()
 
@@ -179,9 +214,13 @@ def write_plot(result: VisibilityResult, path: str, target_name: str | None = No
     import matplotlib.pyplot as plt
 
     fig = make_plot(result, target_name=target_name)
+    save_plot_figure(fig, path)
+    plt.close(fig)
+
+
+def save_plot_figure(fig, path: str) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
 
 
 def make_plot(result: VisibilityResult, target_name: str | None = None):
@@ -241,6 +280,19 @@ def _to_float_array(series: pd.Series) -> np.ndarray:
 def _looks_sexagesimal_ra(value: str) -> bool:
     lowered = value.lower()
     return ":" in value or "h" in lowered or "m" in lowered or "s" in lowered
+
+
+def _matplotlib_backend_can_show(backend: str) -> bool:
+    non_interactive = {
+        "agg",
+        "cairo",
+        "pdf",
+        "pgf",
+        "ps",
+        "svg",
+        "template",
+    }
+    return backend.lower() not in non_interactive
 
 
 def prepare_matplotlib_file_output() -> None:
