@@ -19,30 +19,84 @@ rtvt --help
 roman_tvt --help
 ```
 
-## Installation
+## Install from GitHub in a Clean Environment
 
-For local development:
-
-```bash
-conda create -n rtvt python=3.12
-conda activate rtvt
-pip install -e .
-```
-
-After the private GitHub repository is available, you can test a direct GitHub
-install with:
+Because this repository is private, make sure your terminal can access private
+GitHub repositories first. The easiest route is the GitHub CLI:
 
 ```bash
-pip install "git+https://github.com/shahbandeh/RTVT.git"
+gh auth status
+gh auth login
+gh auth setup-git
 ```
 
-For notebook interactivity and the Plotly 3D helper:
+Then create a fresh environment and install RTVT directly from GitHub:
 
 ```bash
-pip install -e ".[all]"
+conda create -n rtvt-test python=3.12 -y
+conda activate rtvt-test
+python -m pip install --upgrade pip
+python -m pip install "git+https://github.com/shahbandeh/RTVT.git"
 ```
 
-## Command-line usage
+If you prefer SSH and already have SSH keys configured with GitHub, this should
+also work:
+
+```bash
+python -m pip install "git+ssh://git@github.com/shahbandeh/RTVT.git"
+```
+
+Verify the install:
+
+```bash
+rtvt --version
+rtvt --help
+rtvt --ra 90.0 --dec -1.0 --start-date 2024-01-01 --duration-days 5
+```
+
+You should see a terminal summary headed `Roman Target Visibility Tool`.
+
+To test file outputs:
+
+```bash
+rtvt --ra 90.0 --dec -1.0 \
+  --start-date 2024-01-01 \
+  --duration-days 5 \
+  --write-csv visibility.csv \
+  --write-plot visibility.png
+```
+
+That should create `visibility.csv` and `visibility.png` in your current
+directory.
+
+## Optional Notebook Install
+
+The base install is enough for the command-line tool and core visibility API.
+For notebook interactivity and the Plotly 3D helper, install the optional
+extras:
+
+```bash
+python -m pip install "rtvt[all] @ git+https://github.com/shahbandeh/RTVT.git"
+```
+
+Then install a Jupyter kernel for the environment if needed:
+
+```bash
+python -m ipykernel install --user --name rtvt-test --display-name "Python (rtvt-test)"
+```
+
+## Local Development Install
+
+If you have cloned this repository and want an editable development install:
+
+```bash
+conda create -n rtvt-dev python=3.12 -y
+conda activate rtvt-dev
+python -m pip install --upgrade pip
+python -m pip install -e ".[all,test]"
+```
+
+## Command-line Usage
 
 Run a fixed-target visibility calculation:
 
