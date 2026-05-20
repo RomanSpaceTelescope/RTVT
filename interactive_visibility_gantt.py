@@ -12,6 +12,7 @@ notebook after enabling an interactive matplotlib backend, for example:
 
 from __future__ import annotations
 
+import base64
 import io
 import os
 import tempfile
@@ -71,6 +72,12 @@ def figure_png_bytes(fig, dpi=120):
     fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
     plt.close(fig)
     return buf.getvalue()
+
+
+def figure_img_html(fig, dpi=120):
+    png = figure_png_bytes(fig, dpi=dpi)
+    encoded = base64.b64encode(png).decode("ascii")
+    return f'<img src="data:image/png;base64,{encoded}" style="max-width: 100%; height: auto;">'
 
 
 def to_deg(series):
@@ -364,10 +371,9 @@ def launch_interactive_sky_gantt(
     status_label = widgets.Label(
         value=f"Click on the sky map to select targets in {coordinate_title} coordinates."
     )
-    vis_output = widgets.Image(format="png", layout=widgets.Layout(width="100%"))
-    detail_output = widgets.Image(format="png", layout=widgets.Layout(width="100%"))
-    gantt_output = widgets.Image(format="png", layout=widgets.Layout(width="100%"))
-    comparison_output = widgets.Image(format="png", layout=widgets.Layout(width="100%"))
+    vis_output = widgets.HTML()
+    gantt_output = widgets.HTML()
+    comparison_output = widgets.HTML()
 
     selected_targets = []
     selected_markers = []
@@ -422,98 +428,12 @@ def launch_interactive_sky_gantt(
             tick.set_rotation(45)
         fig_v.tight_layout()
 
-        vis_output.value = figure_png_bytes(fig_v)
-
-    def _render_latest_details(display_label, radec_label, dates_vis, item):
-        color = item["color"]
-        with plt.ioff():
-            fig_d, (ax_roll, ax_sun) = plt.subplots(2, 1, figsize=(11, 6), sharex=True)
-
-        ax_roll.plot(
-            dates_vis,
-            item["nominal_roll"],
-            color=color,
-            lw=1.8,
-            ls="-",
-            label="nominal_roll",
-        )
-        ax_roll.plot(
-            dates_vis,
-            item["pa_obs_y"],
-            color=color,
-            lw=1.4,
-            ls="--",
-            alpha=0.8,
-            label="pa_obs_y",
-        )
-        ax_roll.plot(
-            dates_vis,
-            item["pa_fpa_local_x"],
-            color=color,
-            lw=1.4,
-            ls=":",
-            alpha=0.8,
-            label="pa_fpa_local_x",
-        )
-        ax_roll.plot(
-            dates_vis,
-            item["pa_fpa_local_y"],
-            color=color,
-            lw=1.4,
-            ls="-.",
-            alpha=0.8,
-            label="pa_fpa_local_y",
-        )
-        ax_roll.set_ylabel("Angle (deg)")
-        ax_roll.set_title(f"Roll and Position Angles -- {display_label} ({radec_label})")
-        ax_roll.legend(fontsize=8, loc="upper right")
-        ax_roll.grid(alpha=0.3)
-
-        ax_sun.plot(
-            dates_vis,
-            item["sunang_x"],
-            color=color,
-            lw=1.8,
-            ls="-",
-            label="sunang_x",
-        )
-        ax_sun.plot(
-            dates_vis,
-            item["sunang_y"],
-            color=color,
-            lw=1.4,
-            ls="--",
-            alpha=0.8,
-            label="sunang_y",
-        )
-        ax_sun.plot(
-            dates_vis,
-            item["sunang_z"],
-            color=color,
-            lw=1.4,
-            ls=":",
-            alpha=0.8,
-            label="sunang_z",
-        )
-        ax_sun.set_ylabel("Angle (deg)")
-        ax_sun.set_xlabel("Date")
-        ax_sun.set_title(f"Sun Angles (Observatory Frame) -- {display_label}")
-        ax_sun.legend(fontsize=8, loc="upper right")
-        ax_sun.grid(alpha=0.3)
-
-        ax_sun.xaxis.set_major_locator(MonthLocator())
-        ax_sun.xaxis.set_major_formatter(DateFormatter("%b %d"))
-        for tick in ax_sun.get_xticklabels():
-            tick.set_rotation(45)
-        fig_d.tight_layout()
-
-        detail_output.value = figure_png_bytes(fig_d)
+        vis_output.value = figure_img_html(fig_v)
 
     def _render_selected_gantt():
         if not selected_targets:
-            gantt_output.value = b""
-            detail_output.value = b""
-            comparison_output.value = b""
+            gantt_output.value = ""
+            comparison_output.value = ""
             return
 
         with plt.ioff():
@@ -578,13 +498,13 @@ def launch_interactive_sky_gantt(
         ax.grid(axis="x", alpha=0.3)
         fig_g.tight_layout()
 
-        gantt_output.value = figure_png_bytes(fig_g)
+        gantt_output.value = figure_img_html(fig_g)
 
         _render_selected_separation_comparison()
 
     def _render_selected_separation_comparison():
         if not selected_targets:
-            comparison_output.value = b""
+            comparison_output.value = ""
             return
 
         with plt.ioff():
@@ -625,7 +545,7 @@ def launch_interactive_sky_gantt(
             tick.set_rotation(45)
         fig_c.tight_layout()
 
-        comparison_output.value = figure_png_bytes(fig_c)
+        comparison_output.value = figure_img_html(fig_c)
 
     def on_sky_click(event):
         if event.inaxes is not ax_sky or event.xdata is None:
@@ -665,13 +585,6 @@ def launch_interactive_sky_gantt(
         good = df_one["good_angles"].astype(bool).values
         dates_vis = get_dates(df_one)
         separation = to_deg(df_one["separation"])
-        nominal_roll = to_deg(df_one["nominal_roll"])
-        pa_obs_y = to_deg(df_one["pa_obs_y"])
-        pa_fpa_local_x = to_deg(df_one["pa_fpa_local_x"])
-        pa_fpa_local_y = to_deg(df_one["pa_fpa_local_y"])
-        sunang_x = to_deg(df_one["sunang_x"])
-        sunang_y = to_deg(df_one["sunang_y"])
-        sunang_z = to_deg(df_one["sunang_z"])
         is_cvz, vis_fraction, _ = check_cvz_status(
             df_one,
             good_angle_threshold=good_angle_threshold,
@@ -716,20 +629,12 @@ def launch_interactive_sky_gantt(
                 dates=dates_vis,
                 good=good,
                 separation=separation,
-                nominal_roll=nominal_roll,
-                pa_obs_y=pa_obs_y,
-                pa_fpa_local_x=pa_fpa_local_x,
-                pa_fpa_local_y=pa_fpa_local_y,
-                sunang_x=sunang_x,
-                sunang_y=sunang_y,
-                sunang_z=sunang_z,
                 is_cvz=bool(is_cvz),
                 vis_fraction=float(vis_fraction),
                 color=marker_color,
             )
         )
 
-        latest_item = selected_targets[-1]
         fig_sky.canvas.draw_idle()
         _render_latest_visibility(
             display_label,
@@ -741,7 +646,6 @@ def launch_interactive_sky_gantt(
             is_cvz,
             marker_color,
         )
-        _render_latest_details(display_label, radec_label, dates_vis, latest_item)
         _render_selected_gantt()
 
         status_label.value = (
@@ -756,7 +660,6 @@ def launch_interactive_sky_gantt(
     plt.show()
     display(status_label)
     display(vis_output)
-    display(detail_output)
     display(gantt_output)
     display(comparison_output)
 
@@ -765,7 +668,6 @@ def launch_interactive_sky_gantt(
         "ax_sky": ax_sky,
         "status_label": status_label,
         "vis_output": vis_output,
-        "detail_output": detail_output,
         "gantt_output": gantt_output,
         "comparison_output": comparison_output,
         "selected_targets": selected_targets,
