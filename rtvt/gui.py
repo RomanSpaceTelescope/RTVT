@@ -42,6 +42,7 @@ class RTVTGui(tk.Tk):
 
         self.result: VisibilityResult | None = None
         self.target_name_var = tk.StringVar(value="Demo target")
+        self.coordinate_system_var = tk.StringVar(value="equatorial")
         self.ra_var = tk.StringVar(value="90.0")
         self.dec_var = tk.StringVar(value="-1.0")
         self.start_date_var = tk.StringVar(value="2024-01-01")
@@ -71,40 +72,53 @@ class RTVTGui(tk.Tk):
 
         fields = [
             ("Target name", self.target_name_var),
-            ("RA", self.ra_var),
-            ("Dec", self.dec_var),
+            ("Longitude", self.ra_var),
+            ("Latitude", self.dec_var),
             ("Start date", self.start_date_var),
             ("Duration days", self.duration_var),
             ("Sampling days", self.sampling_var),
         ]
-        for row, (label, var) in enumerate(fields, start=2):
-            ttk.Label(controls, text=label).grid(row=row, column=0, sticky="w", pady=5)
+        ttk.Label(controls, text="Coordinates").grid(row=2, column=0, sticky="w", pady=5)
+        coord_box = ttk.Combobox(
+            controls,
+            textvariable=self.coordinate_system_var,
+            values=("equatorial", "galactic"),
+            state="readonly",
+            width=21,
+        )
+        coord_box.grid(row=2, column=1, sticky="ew", pady=5, padx=(10, 0))
+        coord_box.bind("<<ComboboxSelected>>", lambda _event: self._update_coordinate_labels())
+
+        self.coord_label_widgets = {}
+        for row, (label, var) in enumerate(fields, start=3):
+            label_widget = ttk.Label(controls, text=label)
+            label_widget.grid(row=row, column=0, sticky="w", pady=5)
+            if label in {"Longitude", "Latitude"}:
+                self.coord_label_widgets[label] = label_widget
             ttk.Entry(controls, textvariable=var, width=24).grid(
                 row=row, column=1, sticky="ew", pady=5, padx=(10, 0)
             )
 
         ttk.Button(controls, text="Compute Visibility", command=self.compute).grid(
-            row=8, column=0, columnspan=2, sticky="ew", pady=(16, 6)
+            row=9, column=0, columnspan=2, sticky="ew", pady=(16, 6)
         )
         ttk.Button(controls, text="Save CSV", command=self.save_csv).grid(
-            row=9, column=0, columnspan=2, sticky="ew", pady=4
-        )
-        ttk.Button(controls, text="Save Plot", command=self.save_plot).grid(
             row=10, column=0, columnspan=2, sticky="ew", pady=4
         )
-        ttk.Button(controls, text="Copy CLI Command", command=self.copy_cli_command).grid(
+        ttk.Button(controls, text="Save Plot", command=self.save_plot).grid(
             row=11, column=0, columnspan=2, sticky="ew", pady=4
         )
+        ttk.Button(controls, text="Copy CLI Command", command=self.copy_cli_command).grid(
+            row=12, column=0, columnspan=2, sticky="ew", pady=4
+        )
 
-        ttk.Label(
+        self.coordinate_help_label = ttk.Label(
             controls,
-            text=(
-                "RA accepts decimal degrees or sexagesimal hour angle.\n"
-                "Dec accepts decimal degrees or sexagesimal degrees."
-            ),
             wraplength=260,
             foreground="#4f5b66",
-        ).grid(row=12, column=0, columnspan=2, sticky="w", pady=(18, 0))
+        )
+        self.coordinate_help_label.grid(row=13, column=0, columnspan=2, sticky="w", pady=(18, 0))
+        self._update_coordinate_labels()
 
         main = ttk.Frame(self, padding=(0, 14, 14, 14))
         main.grid(row=0, column=1, sticky="nsew")
@@ -214,6 +228,23 @@ class RTVTGui(tk.Tk):
         scroll.grid(row=0, column=1, sticky="ns")
         self.data_tree.configure(yscrollcommand=scroll.set)
 
+    def _update_coordinate_labels(self) -> None:
+        if self.coordinate_system_var.get() == "galactic":
+            self.coord_label_widgets["Longitude"].configure(text="Galactic l")
+            self.coord_label_widgets["Latitude"].configure(text="Galactic b")
+            self.coordinate_help_label.configure(
+                text="Galactic l and b are entered in decimal degrees."
+            )
+        else:
+            self.coord_label_widgets["Longitude"].configure(text="RA")
+            self.coord_label_widgets["Latitude"].configure(text="Dec")
+            self.coordinate_help_label.configure(
+                text=(
+                    "RA accepts decimal degrees or sexagesimal hour angle.\n"
+                    "Dec accepts decimal degrees or sexagesimal degrees."
+                )
+            )
+
     def compute(self) -> None:
         try:
             duration_days = float(self.duration_var.get())
@@ -235,6 +266,7 @@ class RTVTGui(tk.Tk):
         args = Namespace(
             ra=self.ra_var.get().strip(),
             dec=self.dec_var.get().strip(),
+            coordinate_system=self.coordinate_system_var.get(),
             start_date=self.start_date_var.get().strip(),
             duration_days=duration_days,
             sampling_days=sampling_days,
@@ -368,10 +400,15 @@ class RTVTGui(tk.Tk):
     def copy_cli_command(self) -> None:
         duration = self.duration_var.get().strip()
         sampling = self.sampling_var.get().strip()
+        if self.coordinate_system_var.get() == "galactic":
+            lon_arg, lat_arg = "--lon", "--lat"
+        else:
+            lon_arg, lat_arg = "--ra", "--dec"
         command = (
             "rtvt "
-            f"--ra {self.ra_var.get().strip()} "
-            f"--dec {self.dec_var.get().strip()} "
+            f"{lon_arg} {self.ra_var.get().strip()} "
+            f"{lat_arg} {self.dec_var.get().strip()} "
+            f"--coordinate-system {self.coordinate_system_var.get()} "
             f"--start-date {self.start_date_var.get().strip()} "
             f"--duration-days {duration} "
             f"--sampling-days {sampling} "

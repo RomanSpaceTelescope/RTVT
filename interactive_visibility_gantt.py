@@ -105,6 +105,49 @@ def check_cvz_status(df, max_sep_deg=126.0, good_angle_threshold=0.99):
     return is_cvz, vis_frac, info_str
 
 
+def normalize_coordinate_system(value):
+    normalized = str(value).strip().lower()
+    aliases = {
+        "equatorial": "equatorial",
+        "eq": "equatorial",
+        "icrs": "equatorial",
+        "radec": "equatorial",
+        "ra/dec": "equatorial",
+        "galactic": "galactic",
+        "gal": "galactic",
+        "lb": "galactic",
+        "l/b": "galactic",
+    }
+    if normalized not in aliases:
+        raise ValueError("coordinate_system must be 'equatorial' or 'galactic'")
+    return aliases[normalized]
+
+
+def coordinate_labels(coordinate_system):
+    if normalize_coordinate_system(coordinate_system) == "galactic":
+        return "l", "b", "Galactic"
+    return "RA", "Dec", "Equatorial"
+
+
+def skycoord_from_lon_lat(lon_deg, lat_deg, coordinate_system):
+    if normalize_coordinate_system(coordinate_system) == "galactic":
+        return SkyCoord(l=lon_deg * u.deg, b=lat_deg * u.deg, frame="galactic")
+    return SkyCoord(ra=lon_deg * u.deg, dec=lat_deg * u.deg, frame="icrs")
+
+
+def display_lon_lat(coord, coordinate_system):
+    if normalize_coordinate_system(coordinate_system) == "galactic":
+        gal = coord.galactic
+        return float(gal.l.deg), float(gal.b.deg)
+    icrs = coord.icrs
+    return float(icrs.ra.deg), float(icrs.dec.deg)
+
+
+def format_display_coordinate(lon_deg, lat_deg, coordinate_system, precision=1):
+    lon_label, lat_label, _ = coordinate_labels(coordinate_system)
+    return f"{lon_label}={lon_deg:.{precision}f}, {lat_label}={lat_deg:.{precision}f}"
+
+
 def compute_all_sky_visibility_grid(
     ra_grid=None,
     dec_grid=None,
@@ -112,6 +155,7 @@ def compute_all_sky_visibility_grid(
     start_time=None,
     duration_days=365,
     sampling_days=1,
+    coordinate_system="equatorial",
 ):
     """
     Compute a coarse all-sky visibility-fraction grid for the background map.
@@ -119,6 +163,8 @@ def compute_all_sky_visibility_grid(
     Parameters are intentionally the same style as compute_visibility. If
     ra_grid/dec_grid are omitted, a coarse 10 degree grid is used by default.
     """
+    coordinate_system = normalize_coordinate_system(coordinate_system)
+
     if ra_grid is None:
         ra_grid = np.arange(0, 360, grid_step_deg)
     if dec_grid is None:
@@ -129,7 +175,7 @@ def compute_all_sky_visibility_grid(
     dec_flat = dec_mesh.ravel()
 
     sky_points = [
-        SkyCoord(ra=r * u.deg, dec=d * u.deg, frame="icrs")
+        skycoord_from_lon_lat(r, d, coordinate_system)
         for r, d in zip(ra_flat, dec_flat)
     ]
 
@@ -165,6 +211,7 @@ def launch_interactive_sky_gantt(
     duration_days=365,
     sampling_days=1,
     good_angle_threshold=0.99,
+    coordinate_system="equatorial",
 ):
     """
     Launch the interactive Mollweide selector and cumulative Gantt display.
@@ -172,6 +219,9 @@ def launch_interactive_sky_gantt(
     If ra_grid, dec_grid, and vis_frac_2d are supplied, they are reused. If any
     are omitted, a coarse all-sky visibility map is computed first.
     """
+    coordinate_system = normalize_coordinate_system(coordinate_system)
+    lon_label, lat_label, coordinate_title = coordinate_labels(coordinate_system)
+
     if ra_grid is None or dec_grid is None or vis_frac_2d is None:
         ra_grid, dec_grid, vis_frac_2d = compute_all_sky_visibility_grid(
             ra_grid=ra_grid,
@@ -180,6 +230,7 @@ def launch_interactive_sky_gantt(
             start_time=start_time,
             duration_days=duration_days,
             sampling_days=sampling_days,
+            coordinate_system=coordinate_system,
         )
 
     if test_targets is None:
@@ -225,10 +276,9 @@ def launch_interactive_sky_gantt(
     cbar.set_label("Visibility Fraction (of year)")
 
     for tgt in test_targets:
-        tgt_ra = tgt.ra.deg
-        tgt_dec = tgt.dec.deg
-        tgt_ra_plot = np.deg2rad(tgt_ra - 360 if tgt_ra > 180 else tgt_ra)
-        tgt_dec_plot = np.deg2rad(tgt_dec)
+        tgt_lon, tgt_lat = display_lon_lat(tgt, coordinate_system)
+        tgt_ra_plot = np.deg2rad(tgt_lon - 360 if tgt_lon > 180 else tgt_lon)
+        tgt_dec_plot = np.deg2rad(tgt_lat)
         ax_sky.plot(
             tgt_ra_plot,
             tgt_dec_plot,
@@ -239,22 +289,25 @@ def launch_interactive_sky_gantt(
         )
 
     ax_sky.set_title(
-        "All-Sky Visibility Fraction -- Click to Select Targets",
+        f"All-Sky Visibility Fraction ({coordinate_title}) -- Click to Select Targets",
         fontsize=12,
         pad=20,
     )
     ax_sky.grid(True, alpha=0.3)
     fig_sky.tight_layout()
 
-    status_label = widgets.Label(value="Click on the sky map to select targets.")
+    status_label = widgets.Label(
+        value=f"Click on the sky map to select targets in {coordinate_title} coordinates."
+    )
     vis_output = widgets.Output()
     gantt_output = widgets.Output()
+    comparison_output = widgets.Output()
 
     selected_targets = []
     selected_markers = []
     selected_number_labels = []
 
-    def _render_latest_visibility(radec_label, dates_vis, good, separation, vis_fraction, is_cvz):
+    def _render_latest_visibility(display_label, radec_label, dates_vis, good, separation, vis_fraction, is_cvz):
         fig_v, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 6), sharex=True)
 
         title_suffix = " [CVZ]" if is_cvz else ""
@@ -265,7 +318,7 @@ def launch_interactive_sky_gantt(
         ax1.set_ylim(-0.1, 1.1)
         ax1.set_ylabel("Visibility")
         ax1.set_title(
-            f"Visibility Window -- {radec_label}{title_suffix} "
+            f"Visibility Window -- {display_label}{title_suffix} "
             f"(vis frac = {vis_fraction * 100:.1f}%)"
         )
         ax1.grid(alpha=0.3)
@@ -283,7 +336,7 @@ def launch_interactive_sky_gantt(
         )
         ax2.set_ylabel("Separation (deg)")
         ax2.set_xlabel("Date")
-        ax2.set_title(f"Sun-Target Separation -- {radec_label}")
+        ax2.set_title(f"Sun-Target Separation -- {display_label} ({radec_label})")
         ax2.legend(fontsize=8, loc="upper right")
         ax2.grid(alpha=0.3)
 
@@ -306,12 +359,23 @@ def launch_interactive_sky_gantt(
         if not selected_targets:
             with gantt_output:
                 clear_output(wait=True)
+            with comparison_output:
+                clear_output(wait=True)
             return
 
         fig_g, ax = plt.subplots(figsize=(13, 0.7 * len(selected_targets) + 1.8))
         colors = plt.cm.Set2(np.linspace(0, 1, max(len(selected_targets), 1)))
+        latest_index = len(selected_targets) - 1
 
         for i, item in enumerate(selected_targets):
+            if i == latest_index:
+                ax.axhspan(
+                    i - 0.43,
+                    i + 0.43,
+                    color="#fff3a3",
+                    alpha=0.65,
+                    zorder=0,
+                )
             windows = get_observable_windows(item["good"])
             bars = []
             for start_idx, length in windows:
@@ -328,6 +392,7 @@ def launch_interactive_sky_gantt(
                     facecolors=facecolor,
                     edgecolors="black",
                     linewidth=0.5,
+                    zorder=2,
                 )
             else:
                 ax.text(
@@ -342,7 +407,7 @@ def launch_interactive_sky_gantt(
                 )
 
         labels = [
-            f"{i + 1}: RA={item['ra_deg']:.1f}, Dec={item['dec_deg']:.1f}"
+            f"{i + 1}: {item['display_label']}"
             f"{' [CVZ]' if item['is_cvz'] else ''}"
             for i, item in enumerate(selected_targets)
         ]
@@ -354,7 +419,7 @@ def launch_interactive_sky_gantt(
         for tick in ax.get_xticklabels():
             tick.set_rotation(45)
         ax.set_xlabel("Date")
-        ax.set_title("Selected-target Visibility Windows (Gantt)")
+        ax.set_title("Selected-target Visibility Windows (Gantt; latest target highlighted)")
         ax.grid(axis="x", alpha=0.3)
         fig_g.tight_layout()
 
@@ -367,6 +432,61 @@ def launch_interactive_sky_gantt(
             clear_output(wait=True)
             display(IPyImage(data=buf.read()))
 
+        _render_selected_separation_comparison()
+
+    def _render_selected_separation_comparison():
+        if not selected_targets:
+            with comparison_output:
+                clear_output(wait=True)
+            return
+
+        fig_c, ax = plt.subplots(figsize=(13, 5.2))
+        colors = plt.cm.tab10(np.linspace(0, 1, max(len(selected_targets), 1)))
+        latest_index = len(selected_targets) - 1
+
+        for i, item in enumerate(selected_targets):
+            is_latest = i == latest_index
+            label = f"{i + 1}: {item['display_label']}"
+            ax.plot(
+                item["dates"],
+                item["separation"],
+                lw=3.0 if is_latest else 1.3,
+                alpha=1.0 if is_latest else 0.65,
+                color="black" if is_latest else colors[i % len(colors)],
+                label=label + (" (latest)" if is_latest else ""),
+                zorder=4 if is_latest else 2,
+            )
+
+        ax.axhline(54, ls="--", color="green", lw=1, label="Min (54 deg)")
+        ax.axhline(126, ls="--", color="orange", lw=1, label="Max (126 deg)")
+        ax.fill_between(
+            selected_targets[-1]["dates"],
+            54,
+            126,
+            alpha=0.12,
+            color="blue",
+            label="Observable range",
+        )
+        ax.set_ylabel("Sun-target separation (deg)")
+        ax.set_xlabel("Date")
+        ax.set_title("Selected-target Sun-Target Separation Comparison")
+        ax.grid(alpha=0.3)
+        ax.legend(fontsize=8, loc="center left", bbox_to_anchor=(1.01, 0.5))
+        ax.xaxis.set_major_locator(MonthLocator())
+        ax.xaxis.set_major_formatter(DateFormatter("%b %d"))
+        for tick in ax.get_xticklabels():
+            tick.set_rotation(45)
+        fig_c.tight_layout()
+
+        buf = io.BytesIO()
+        fig_c.savefig(buf, format="png", dpi=120, bbox_inches="tight")
+        plt.close(fig_c)
+        buf.seek(0)
+
+        with comparison_output:
+            clear_output(wait=True)
+            display(IPyImage(data=buf.read()))
+
     def on_sky_click(event):
         if event.inaxes is not ax_sky or event.xdata is None:
             return
@@ -374,20 +494,21 @@ def launch_interactive_sky_gantt(
         lon_rad = event.xdata
         lat_rad = event.ydata
 
-        ra_deg = np.degrees(lon_rad)
-        if ra_deg < 0:
-            ra_deg += 360.0
-        dec_deg = np.degrees(lat_rad)
+        lon_deg = np.degrees(lon_rad)
+        if lon_deg < 0:
+            lon_deg += 360.0
+        lat_deg = np.degrees(lat_rad)
 
-        ra_deg = np.clip(ra_deg, 0, 360)
-        dec_deg = np.clip(dec_deg, -90, 90)
+        lon_deg = np.clip(lon_deg, 0, 360)
+        lat_deg = np.clip(lat_deg, -90, 90)
+        display_label = format_display_coordinate(lon_deg, lat_deg, coordinate_system)
 
-        status_label.value = f"Computing visibility for RA={ra_deg:.1f}, Dec={dec_deg:.1f}..."
+        status_label.value = f"Computing visibility for {display_label}..."
 
         t0 = _normalize_start_time(start_time)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", AstropyWarning)
-            tgt_click = SkyCoord(ra_deg * u.deg, dec_deg * u.deg, frame="icrs")
+            tgt_click = skycoord_from_lon_lat(lon_deg, lat_deg, coordinate_system)
             vis = compute_visibility(
                 tgt_click,
                 report=False,
@@ -439,8 +560,12 @@ def launch_interactive_sky_gantt(
         selected_targets.append(
             dict(
                 label=radec_label,
-                ra_deg=float(ra_deg),
-                dec_deg=float(dec_deg),
+                display_label=display_label,
+                coord_system=coordinate_system,
+                coord_lon_deg=float(lon_deg),
+                coord_lat_deg=float(lat_deg),
+                ra_deg=float(tgt_click.icrs.ra.deg),
+                dec_deg=float(tgt_click.icrs.dec.deg),
                 dates=dates_vis,
                 good=good,
                 separation=separation,
@@ -451,6 +576,7 @@ def launch_interactive_sky_gantt(
 
         fig_sky.canvas.draw_idle()
         _render_latest_visibility(
+            display_label,
             radec_label,
             dates_vis,
             good,
@@ -462,7 +588,7 @@ def launch_interactive_sky_gantt(
 
         status_label.value = (
             f"Selected {len(selected_targets)} target(s). Latest: "
-            f"RA={ra_deg:.1f}, Dec={dec_deg:.1f} -- {radec_label} -- "
+            f"{display_label} -- {radec_label} -- "
             f"Vis: {vis_fraction * 100:.1f}% -- "
             f"{'CVZ' if is_cvz else 'not CVZ'}"
         )
@@ -473,6 +599,7 @@ def launch_interactive_sky_gantt(
     display(status_label)
     display(vis_output)
     display(gantt_output)
+    display(comparison_output)
 
     return {
         "fig_sky": fig_sky,
@@ -480,9 +607,64 @@ def launch_interactive_sky_gantt(
         "status_label": status_label,
         "vis_output": vis_output,
         "gantt_output": gantt_output,
+        "comparison_output": comparison_output,
         "selected_targets": selected_targets,
         "selected_markers": selected_markers,
         "selected_number_labels": selected_number_labels,
+    }
+
+
+def launch_interactive_sky_gantt_with_controls(
+    grid_step_deg=10,
+    start_time=None,
+    duration_days=365,
+    sampling_days=1,
+    good_angle_threshold=0.99,
+):
+    """
+    Display notebook controls for choosing Equatorial or Galactic coordinates.
+
+    Click Launch/Refresh after changing the coordinate system. The selected
+    frame controls the all-sky map axes and the coordinates reported for each
+    click; the underlying Roman visibility calculation is performed in ICRS.
+    """
+    coordinate_selector = widgets.ToggleButtons(
+        options=[
+            ("Equatorial (RA/Dec)", "equatorial"),
+            ("Galactic (l/b)", "galactic"),
+        ],
+        value="equatorial",
+        description="Coords:",
+        button_style="",
+    )
+    launch_button = widgets.Button(
+        description="Launch / Refresh",
+        button_style="primary",
+        tooltip="Create the visibility map with the selected coordinate system.",
+    )
+    output = widgets.Output()
+    state = {"viewer": None}
+
+    def _launch(_event=None):
+        with output:
+            clear_output(wait=True)
+            state["viewer"] = launch_interactive_sky_gantt(
+                grid_step_deg=grid_step_deg,
+                start_time=start_time,
+                duration_days=duration_days,
+                sampling_days=sampling_days,
+                good_angle_threshold=good_angle_threshold,
+                coordinate_system=coordinate_selector.value,
+            )
+
+    launch_button.on_click(_launch)
+    display(widgets.VBox([widgets.HBox([coordinate_selector, launch_button]), output]))
+    _launch()
+    return {
+        "coordinate_selector": coordinate_selector,
+        "launch_button": launch_button,
+        "output": output,
+        "state": state,
     }
 
 

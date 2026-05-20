@@ -25,6 +25,7 @@ class VisibilityResult:
     table: pd.DataFrame
     sampled_times: Time
     sampling_days: float
+    coordinate_system: str = "equatorial"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -55,11 +56,30 @@ def build_parser() -> argparse.ArgumentParser:
         prog="rtvt",
         description="Roman Target Visibility Tool fixed-target calculator.",
     )
-    parser.add_argument("--ra", required=True, help="Right ascension in degrees or sexagesimal hour angle.")
-    parser.add_argument("--dec", required=True, help="Declination in degrees or sexagesimal degrees.")
+    parser.add_argument(
+        "--ra",
+        "--lon",
+        dest="ra",
+        required=True,
+        help="Input longitude: RA for equatorial coordinates, or Galactic l for galactic coordinates.",
+    )
+    parser.add_argument(
+        "--dec",
+        "--lat",
+        dest="dec",
+        required=True,
+        help="Input latitude: Dec for equatorial coordinates, or Galactic b for galactic coordinates.",
+    )
     parser.add_argument("--start-date", help="Start date in YYYY-MM-DD format. Defaults to the calculator default.")
     parser.add_argument("--duration-days", type=float, default=365.0, help="Total duration to sample in days.")
     parser.add_argument("--sampling-days", type=float, default=1.0, help="Sampling cadence in days.")
+    parser.add_argument(
+        "--coordinate-system",
+        "--coords",
+        choices=["equatorial", "galactic"],
+        default="equatorial",
+        help="Coordinate system for the input pair. Equatorial uses RA/Dec; Galactic uses l/b.",
+    )
     parser.add_argument("--target-name", help="Optional display name for the target.")
     parser.add_argument("--write-csv", help="Write the sampled visibility table to this CSV path.")
     parser.add_argument("--write-plot", help="Write a static visibility plot to this image path.")
@@ -70,11 +90,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run_visibility(args: argparse.Namespace) -> VisibilityResult:
-    target = parse_target(args.ra, args.dec)
+    coordinate_system = getattr(args, "coordinate_system", "equatorial")
+    target = parse_target(args.ra, args.dec, coordinate_system=coordinate_system)
+    target_icrs = target.icrs
     start_time = parse_start_date(args.start_date)
 
     vis = compute_visibility(
-        target,
+        target_icrs,
         report=False,
         fileout=None,
         interval_sampling_days=args.sampling_days,
@@ -86,15 +108,20 @@ def run_visibility(args: argparse.Namespace) -> VisibilityResult:
     label = vis.df_results.index.levels[0][0]
     table = vis.df_results.xs(label, level=0).copy()
     return VisibilityResult(
-        target=target,
+        target=target_icrs,
         label=label,
         table=table,
         sampled_times=vis.sampled_times,
         sampling_days=float(args.sampling_days),
+        coordinate_system=coordinate_system,
     )
 
 
-def parse_target(ra: str, dec: str) -> SkyCoord:
+def parse_target(ra: str, dec: str, coordinate_system: str = "equatorial") -> SkyCoord:
+    coordinate_system = normalize_coordinate_system(coordinate_system)
+    if coordinate_system == "galactic":
+        return SkyCoord(l=float(ra) * u.deg, b=float(dec) * u.deg, frame="galactic")
+
     ra_unit = u.hourangle if _looks_sexagesimal_ra(ra) else u.deg
     return SkyCoord(ra, dec, unit=(ra_unit, u.deg), frame="icrs")
 
@@ -118,6 +145,9 @@ def format_summary(result: VisibilityResult, target_name: str | None = None) -> 
         f"Target: {title}",
         f"RA: {result.target.ra.deg:.8f} deg",
         f"Dec: {result.target.dec.deg:.8f} deg",
+        f"Galactic l: {result.target.galactic.l.deg:.8f} deg",
+        f"Galactic b: {result.target.galactic.b.deg:.8f} deg",
+        f"Input coordinate system: {result.coordinate_system}",
         f"Checked interval: {start} to {end}",
         f"Sampling cadence: {result.sampling_days:g} day(s)",
         f"Visible samples: {int(np.sum(good))}/{len(good)} ({vis_fraction * 100:.1f}%)",
@@ -280,6 +310,24 @@ def _to_float_array(series: pd.Series) -> np.ndarray:
 def _looks_sexagesimal_ra(value: str) -> bool:
     lowered = value.lower()
     return ":" in value or "h" in lowered or "m" in lowered or "s" in lowered
+
+
+def normalize_coordinate_system(value: str) -> str:
+    normalized = value.strip().lower()
+    aliases = {
+        "equatorial": "equatorial",
+        "eq": "equatorial",
+        "icrs": "equatorial",
+        "radec": "equatorial",
+        "ra/dec": "equatorial",
+        "galactic": "galactic",
+        "gal": "galactic",
+        "lb": "galactic",
+        "l/b": "galactic",
+    }
+    if normalized not in aliases:
+        raise ValueError("coordinate_system must be 'equatorial' or 'galactic'")
+    return aliases[normalized]
 
 
 def _matplotlib_backend_can_show(backend: str) -> bool:

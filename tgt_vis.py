@@ -55,9 +55,11 @@ class compute_visibility():
     def __init__(self,targets_coordinates,fileout=None,report=False,interval_sampling_days=None,interval_start_time=None,interval_duration_days=None):
         
         if isinstance(targets_coordinates, list):
-            self.targets_coordinates = targets_coordinates
+            targets = targets_coordinates
         else:
-            self.targets_coordinates = [targets_coordinates]
+            targets = [targets_coordinates]
+        self.targets_coordinates = [coords.icrs for coords in targets]
+        self.target_labels = self._make_unique_target_labels(self.targets_coordinates)
 
         self.fileout = fileout
         self.report = report
@@ -81,7 +83,7 @@ class compute_visibility():
 
 
     def initialize_dataframe(self):
-        radec_string = ['({}, {})'.format(coords.ra.to_string(u.hour), coords.dec.to_string(u.degree, alwayssign=True)) for coords in self.targets_coordinates]
+        radec_string = self.target_labels
         time_string  = [self.format_time(time) for time in self.sampled_times]
         index_levels = [radec_string,time_string]
         index_names  = ['(RA, Dec)', 'DOY']
@@ -92,6 +94,25 @@ class compute_visibility():
         # https://stackoverflow.com/questions/71837659/trying-to-sort-multiindex-index-using-categorical-index/73766126#73766126
 
         return (pd.DataFrame(index=multi_index,columns=column_names)).reindex(radec_string,level=0) 
+
+    def _make_unique_target_labels(self, targets_coordinates):
+        labels = [
+            '({}, {})'.format(coords.ra.to_string(u.hour), coords.dec.to_string(u.degree, alwayssign=True))
+            for coords in targets_coordinates
+        ]
+        counts = {}
+        for label in labels:
+            counts[label] = counts.get(label, 0) + 1
+
+        seen = {}
+        unique_labels = []
+        for label in labels:
+            seen[label] = seen.get(label, 0) + 1
+            if counts[label] == 1:
+                unique_labels.append(label)
+            else:
+                unique_labels.append(f"{label} #{seen[label]}")
+        return unique_labels
 
     def format_time(self,time_object):
         """Converts a datetime object's time to DOY.ddddd """
@@ -162,19 +183,21 @@ class compute_visibility():
 
     def get_good_angles(self):
         for i,target_coordinates in enumerate(self.targets_coordinates):
+            target_label = self.target_labels[i]
             
             with warnings.catch_warnings():
                 warnings.simplefilter('ignore', AstropyWarning)
                 sun_angle = self.sun_coord.separation(target_coordinates)   
                 good_angles = (sun_angle >= self.min_sun_angle) & (sun_angle <= self.max_sun_angle)
-            self.df_results.loc[pd.IndexSlice[self.df_results.index.levels[0][i],:],'good_angles'] = good_angles
-            self.df_results.loc[pd.IndexSlice[self.df_results.index.levels[0][i],:],'separation'] = sun_angle
-            self.df_results.loc[pd.IndexSlice[self.df_results.index.levels[0][i],:],'Sun_RA'] = self.sun_coord.ra
-            self.df_results.loc[pd.IndexSlice[self.df_results.index.levels[0][i],:],'Sun_Dec'] = self.sun_coord.dec
+            self.df_results.loc[pd.IndexSlice[target_label,:],'good_angles'] = good_angles
+            self.df_results.loc[pd.IndexSlice[target_label,:],'separation'] = sun_angle
+            self.df_results.loc[pd.IndexSlice[target_label,:],'Sun_RA'] = self.sun_coord.ra
+            self.df_results.loc[pd.IndexSlice[target_label,:],'Sun_Dec'] = self.sun_coord.dec
 
     def get_roll_pa_sunang(self):
 
         for i,target_coordinates in enumerate(self.targets_coordinates):
+            target_label = self.target_labels[i]
 
             # begin roll angle calculations
             cos_ra_t  = np.cos(target_coordinates.ra.radian)
@@ -259,10 +282,10 @@ class compute_visibility():
             sunang_y = np.arccos(y_sun) * 180./np.pi
 
 
-            self.df_results.loc[pd.IndexSlice[self.df_results.index.levels[0][i],:],'nominal_roll'] = nominal_roll
-            self.df_results.loc[pd.IndexSlice[self.df_results.index.levels[0][i],:],'pa_obs_y'] = pa_obs_y
-            self.df_results.loc[pd.IndexSlice[self.df_results.index.levels[0][i],:],'pa_fpa_local_x'] = pa_fpa_local_x
-            self.df_results.loc[pd.IndexSlice[self.df_results.index.levels[0][i],:],'pa_fpa_local_y'] = pa_fpa_local_y
-            self.df_results.loc[pd.IndexSlice[self.df_results.index.levels[0][i],:],'sunang_x'] = sunang_x
-            self.df_results.loc[pd.IndexSlice[self.df_results.index.levels[0][i],:],'sunang_y'] = sunang_y
-            self.df_results.loc[pd.IndexSlice[self.df_results.index.levels[0][i],:],'sunang_z'] = sunang_z
+            self.df_results.loc[pd.IndexSlice[target_label,:],'nominal_roll'] = nominal_roll
+            self.df_results.loc[pd.IndexSlice[target_label,:],'pa_obs_y'] = pa_obs_y
+            self.df_results.loc[pd.IndexSlice[target_label,:],'pa_fpa_local_x'] = pa_fpa_local_x
+            self.df_results.loc[pd.IndexSlice[target_label,:],'pa_fpa_local_y'] = pa_fpa_local_y
+            self.df_results.loc[pd.IndexSlice[target_label,:],'sunang_x'] = sunang_x
+            self.df_results.loc[pd.IndexSlice[target_label,:],'sunang_y'] = sunang_y
+            self.df_results.loc[pd.IndexSlice[target_label,:],'sunang_z'] = sunang_z

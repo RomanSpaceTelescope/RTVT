@@ -12,7 +12,9 @@ Current capabilities include:
 - Nominal roll and focal-plane position-angle quantities
 - Static command-line summaries, CSV output, and visibility plots
 - A desktop pop-up GUI for coordinate entry, summaries, plots, tables, and exports
+- Equatorial RA/Dec and Galactic l/b input modes
 - An interactive notebook sky selector with cumulative Gantt-style visibility windows
+  and multi-target Sun-separation comparison
 - A Plotly 3D Sun-track helper for geometry exploration
 
 RTVT is an alpha-stage research/development package. Validate science outputs
@@ -121,6 +123,17 @@ rtvt --ra 253.2458 --dec 2.4008 \
   --sampling-days 1
 ```
 
+Use Galactic coordinates instead of equatorial RA/Dec:
+
+```bash
+rtvt --coordinate-system galactic \
+  --lon 0.0 \
+  --lat 0.0 \
+  --start-date 2026-01-01 \
+  --duration-days 365 \
+  --sampling-days 1
+```
+
 Write products:
 
 ```bash
@@ -132,7 +145,8 @@ rtvt --ra 253.2458 --dec 2.4008 \
 ```
 
 RA may be provided in decimal degrees or sexagesimal hour angle. Dec may be
-provided in decimal degrees or sexagesimal degrees.
+provided in decimal degrees or sexagesimal degrees. In Galactic mode, longitude
+and latitude are entered as decimal-degree `l` and `b`.
 
 ## GUI Usage
 
@@ -145,6 +159,7 @@ rtvt-gui
 
 The GUI provides:
 
+- an Equatorial/Galactic coordinate selector
 - RA/Dec, start date, duration, and sampling inputs
 - terminal-style summary output
 - visibility and Sun-target separation plots
@@ -178,9 +193,9 @@ In a notebook using the RTVT environment:
 
 ```python
 %matplotlib widget
-from interactive_visibility_gantt import launch_interactive_sky_gantt
+from interactive_visibility_gantt import launch_interactive_sky_gantt_with_controls
 
-viewer = launch_interactive_sky_gantt(
+viewer = launch_interactive_sky_gantt_with_controls(
     grid_step_deg=10,
     duration_days=365,
     sampling_days=1,
@@ -188,7 +203,9 @@ viewer = launch_interactive_sky_gantt(
 ```
 
 The notebook [Run_viz_tool_interactive_gantt.ipynb](Run_viz_tool_interactive_gantt.ipynb)
-is the current demo entry point.
+is the current demo entry point. It includes an Equatorial/Galactic selector,
+the latest target visibility plot, a cumulative Gantt chart with the latest
+target highlighted, and a multi-target Sun-separation comparison plot.
 
 ## Relationship to JWST GTVT
 

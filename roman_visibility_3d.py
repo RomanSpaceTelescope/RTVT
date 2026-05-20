@@ -86,7 +86,8 @@ def roman_suntrack_3d(
         Cadence in days
     """
 
-    tgt = SkyCoord(ra, dec, frame=frame)
+    tgt_input = SkyCoord(ra, dec, frame=frame)
+    tgt = tgt_input.icrs
 
     t0 = None
     if start_date:
@@ -173,7 +174,13 @@ def roman_suntrack_3d(
         text=["Target"],
         textposition="top center",
         name="Target",
-        hovertemplate=f"Target<br>RA={tgt.ra.to_string(u.hour)}<br>Dec={tgt.dec.to_string(u.deg, alwayssign=True)}<extra></extra>",
+        hovertemplate=(
+            f"Target<br>RA={tgt.ra.to_string(u.hour)}"
+            f"<br>Dec={tgt.dec.to_string(u.deg, alwayssign=True)}"
+            f"<br>l={tgt.galactic.l.deg:.3f} deg"
+            f"<br>b={tgt.galactic.b.deg:.3f} deg"
+            "<extra></extra>"
+        ),
     ))
 
     # A tiny line from origin to target to make it obvious
