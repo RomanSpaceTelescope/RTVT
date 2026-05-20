@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rtvt"
+version = "0.1.0"
+description = "Roman Target Visibility Tool"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+  { name = "RTVT contributors" }
+]
+keywords = ["astronomy", "roman", "visibility", "target-visibility"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Astronomy",
+]
+dependencies = [
+  "astropy>=5.2",
+  "matplotlib>=3.7",
+  "numpy>=1.24",
+  "pandas>=2.0",
+]
+
+[project.optional-dependencies]
+interactive = [
+  "ipympl>=0.9",
+  "ipython>=8",
+  "ipywidgets>=8",
+]
+plot3d = [
+  "plotly>=5",
+]
+test = [
+  "pytest>=7",
+]
+all = [
+  "ipympl>=0.9",
+  "ipython>=8",
+  "ipywidgets>=8",
+  "plotly>=5",
+]
+
+[project.urls]
+Homepage = "https://github.com/shahbandeh/RTVT"
+Repository = "https://github.com/shahbandeh/RTVT"
+
+[project.scripts]
+rtvt = "rtvt.cli:main"
+roman_tvt = "rtvt.cli:main"
+
+[tool.setuptools]
+packages = ["rtvt"]
+py-modules = [
+  "tgt_vis",
+  "interactive_visibility_gantt",
+  "roman_visibility_3d",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
