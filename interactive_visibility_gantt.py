@@ -25,7 +25,6 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord, get_body
 from astropy.time import Time
 from astropy.utils.exceptions import AstropyWarning
-from IPython.display import Image as IPyImage
 from IPython.display import clear_output, display
 
 from tgt_vis import compute_visibility
@@ -65,6 +64,13 @@ _SKY_GRID_CACHE = {}
 
 def target_color(index):
     return TARGET_COLORS[index % len(TARGET_COLORS)]
+
+
+def figure_png_bytes(fig, dpi=120):
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    return buf.getvalue()
 
 
 def to_deg(series):
@@ -358,10 +364,10 @@ def launch_interactive_sky_gantt(
     status_label = widgets.Label(
         value=f"Click on the sky map to select targets in {coordinate_title} coordinates."
     )
-    vis_output = widgets.Output()
-    detail_output = widgets.Output()
-    gantt_output = widgets.Output()
-    comparison_output = widgets.Output()
+    vis_output = widgets.Image(format="png", layout=widgets.Layout(width="100%"))
+    detail_output = widgets.Image(format="png", layout=widgets.Layout(width="100%"))
+    gantt_output = widgets.Image(format="png", layout=widgets.Layout(width="100%"))
+    comparison_output = widgets.Image(format="png", layout=widgets.Layout(width="100%"))
 
     selected_targets = []
     selected_markers = []
@@ -416,14 +422,7 @@ def launch_interactive_sky_gantt(
             tick.set_rotation(45)
         fig_v.tight_layout()
 
-        buf = io.BytesIO()
-        fig_v.savefig(buf, format="png", dpi=120, bbox_inches="tight")
-        plt.close(fig_v)
-        buf.seek(0)
-
-        with vis_output:
-            clear_output(wait=True)
-            display(IPyImage(data=buf.read()))
+        vis_output.value = figure_png_bytes(fig_v)
 
     def _render_latest_details(display_label, radec_label, dates_vis, item):
         color = item["color"]
@@ -508,23 +507,13 @@ def launch_interactive_sky_gantt(
             tick.set_rotation(45)
         fig_d.tight_layout()
 
-        buf = io.BytesIO()
-        fig_d.savefig(buf, format="png", dpi=120, bbox_inches="tight")
-        plt.close(fig_d)
-        buf.seek(0)
-
-        with detail_output:
-            clear_output(wait=True)
-            display(IPyImage(data=buf.read()))
+        detail_output.value = figure_png_bytes(fig_d)
 
     def _render_selected_gantt():
         if not selected_targets:
-            with gantt_output:
-                clear_output(wait=True)
-            with detail_output:
-                clear_output(wait=True)
-            with comparison_output:
-                clear_output(wait=True)
+            gantt_output.value = b""
+            detail_output.value = b""
+            comparison_output.value = b""
             return
 
         with plt.ioff():
@@ -589,21 +578,13 @@ def launch_interactive_sky_gantt(
         ax.grid(axis="x", alpha=0.3)
         fig_g.tight_layout()
 
-        buf = io.BytesIO()
-        fig_g.savefig(buf, format="png", dpi=120, bbox_inches="tight")
-        plt.close(fig_g)
-        buf.seek(0)
-
-        with gantt_output:
-            clear_output(wait=True)
-            display(IPyImage(data=buf.read()))
+        gantt_output.value = figure_png_bytes(fig_g)
 
         _render_selected_separation_comparison()
 
     def _render_selected_separation_comparison():
         if not selected_targets:
-            with comparison_output:
-                clear_output(wait=True)
+            comparison_output.value = b""
             return
 
         with plt.ioff():
@@ -644,14 +625,7 @@ def launch_interactive_sky_gantt(
             tick.set_rotation(45)
         fig_c.tight_layout()
 
-        buf = io.BytesIO()
-        fig_c.savefig(buf, format="png", dpi=120, bbox_inches="tight")
-        plt.close(fig_c)
-        buf.seek(0)
-
-        with comparison_output:
-            clear_output(wait=True)
-            display(IPyImage(data=buf.read()))
+        comparison_output.value = figure_png_bytes(fig_c)
 
     def on_sky_click(event):
         if event.inaxes is not ax_sky or event.xdata is None:
