@@ -22,7 +22,7 @@ import ipywidgets as widgets
 import numpy as np
 import pandas as pd
 from astropy import units as u
-from astropy.coordinates import SkyCoord
+from astropy.coordinates import SkyCoord, get_body
 from astropy.time import Time
 from astropy.utils.exceptions import AstropyWarning
 from IPython.display import Image as IPyImage
@@ -168,6 +168,13 @@ def format_display_coordinate(lon_deg, lat_deg, coordinate_system, precision=1):
     return f"{lon_label}={lon_deg:.{precision}f}, {lat_label}={lat_deg:.{precision}f}"
 
 
+def sampled_times_for_interval(start_time=None, duration_days=365, sampling_days=1):
+    t_start = _normalize_start_time(start_time)
+    if t_start is None:
+        t_start = Time(["2024-01-01T00:00:00.0"], format="isot", scale="utc")
+    return t_start + np.arange(0.0, duration_days, sampling_days) * u.d
+
+
 def compute_all_sky_visibility_grid(
     ra_grid=None,
     dec_grid=None,
@@ -194,29 +201,19 @@ def compute_all_sky_visibility_grid(
     ra_flat = ra_mesh.ravel()
     dec_flat = dec_mesh.ravel()
 
-    sky_points = [
-        skycoord_from_lon_lat(r, d, coordinate_system)
-        for r, d in zip(ra_flat, dec_flat)
-    ]
-
-    t0 = _normalize_start_time(start_time)
-
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", AstropyWarning)
-        vis_sky = compute_visibility(
-            sky_points,
-            report=False,
-            fileout=None,
-            interval_sampling_days=sampling_days,
-            interval_start_time=t0,
-            interval_duration_days=duration_days,
+        sky_points = skycoord_from_lon_lat(ra_flat, dec_flat, coordinate_system).icrs
+        sampled_times = sampled_times_for_interval(
+            start_time=start_time,
+            duration_days=duration_days,
+            sampling_days=sampling_days,
         )
-        vis_sky.get_good_angles()
+        sun_coord = get_body("Sun", sampled_times)
+        separation = sun_coord[:, np.newaxis].separation(sky_points[np.newaxis, :])
 
-    vis_frac = np.zeros(len(sky_points))
-    for i, label in enumerate(vis_sky.target_labels):
-        df_pt = vis_sky.df_results.xs(label, level=0)
-        vis_frac[i] = df_pt["good_angles"].astype(bool).mean()
+    good_angles = (separation >= 54 * u.deg) & (separation <= 126 * u.deg)
+    vis_frac = np.mean(good_angles, axis=0)
 
     return np.asarray(ra_grid), np.asarray(dec_grid), vis_frac.reshape(ra_mesh.shape)
 
@@ -314,10 +311,11 @@ def launch_interactive_sky_gantt(
     dec_plot = np.deg2rad(dec_grid)
     ra_plot_mesh, dec_plot_mesh = np.meshgrid(ra_plot, dec_plot)
 
-    fig_sky, ax_sky = plt.subplots(
-        figsize=(12, 6),
-        subplot_kw=dict(projection="mollweide"),
-    )
+    with plt.ioff():
+        fig_sky, ax_sky = plt.subplots(
+            figsize=(12, 6),
+            subplot_kw=dict(projection="mollweide"),
+        )
 
     pcm = ax_sky.pcolormesh(
         ra_plot_mesh,
@@ -380,7 +378,8 @@ def launch_interactive_sky_gantt(
         is_cvz,
         color,
     ):
-        fig_v, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 6), sharex=True)
+        with plt.ioff():
+            fig_v, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 6), sharex=True)
 
         title_suffix = " [CVZ]" if is_cvz else ""
 
@@ -429,7 +428,8 @@ def launch_interactive_sky_gantt(
 
     def _render_latest_details(display_label, radec_label, dates_vis, item):
         color = item["color"]
-        fig_d, (ax_roll, ax_sun) = plt.subplots(2, 1, figsize=(11, 6), sharex=True)
+        with plt.ioff():
+            fig_d, (ax_roll, ax_sun) = plt.subplots(2, 1, figsize=(11, 6), sharex=True)
 
         ax_roll.plot(
             dates_vis,
@@ -528,7 +528,8 @@ def launch_interactive_sky_gantt(
                 clear_output(wait=True)
             return
 
-        fig_g, ax = plt.subplots(figsize=(13, 0.7 * len(selected_targets) + 1.8))
+        with plt.ioff():
+            fig_g, ax = plt.subplots(figsize=(13, 0.7 * len(selected_targets) + 1.8))
         latest_index = len(selected_targets) - 1
 
         for i, item in enumerate(selected_targets):
@@ -606,7 +607,8 @@ def launch_interactive_sky_gantt(
                 clear_output(wait=True)
             return
 
-        fig_c, ax = plt.subplots(figsize=(13, 5.2))
+        with plt.ioff():
+            fig_c, ax = plt.subplots(figsize=(13, 5.2))
         latest_index = len(selected_targets) - 1
 
         for i, item in enumerate(selected_targets):
@@ -778,7 +780,7 @@ def launch_interactive_sky_gantt(
 
     fig_sky.canvas.mpl_connect("button_press_event", on_sky_click)
 
-    plt.show()
+    display(fig_sky.canvas)
     display(status_label)
     display(vis_output)
     display(detail_output)
@@ -843,6 +845,7 @@ def launch_interactive_sky_gantt_with_controls(
                 coordinate_system=coordinate_selector.value,
             )
 
+    coordinate_selector.observe(_launch, names="value")
     launch_button.on_click(_launch)
     display(widgets.VBox([widgets.HBox([coordinate_selector, launch_button]), output]))
     _launch()
