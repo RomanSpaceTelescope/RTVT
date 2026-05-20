@@ -311,11 +311,10 @@ def launch_interactive_sky_gantt(
     dec_plot = np.deg2rad(dec_grid)
     ra_plot_mesh, dec_plot_mesh = np.meshgrid(ra_plot, dec_plot)
 
-    with plt.ioff():
-        fig_sky, ax_sky = plt.subplots(
-            figsize=(12, 6),
-            subplot_kw=dict(projection="mollweide"),
-        )
+    fig_sky, ax_sky = plt.subplots(
+        figsize=(12, 6),
+        subplot_kw=dict(projection="mollweide"),
+    )
 
     pcm = ax_sky.pcolormesh(
         ra_plot_mesh,
@@ -780,7 +779,7 @@ def launch_interactive_sky_gantt(
 
     fig_sky.canvas.mpl_connect("button_press_event", on_sky_click)
 
-    display(fig_sky.canvas)
+    plt.show()
     display(status_label)
     display(vis_output)
     display(detail_output)
@@ -835,6 +834,9 @@ def launch_interactive_sky_gantt_with_controls(
     def _launch(_event=None):
         with output:
             clear_output(wait=True)
+            previous_viewer = state.get("viewer")
+            if previous_viewer is not None:
+                plt.close(previous_viewer["fig_sky"])
             print(f"Preparing {coordinate_selector.value} all-sky map...")
             state["viewer"] = launch_interactive_sky_gantt(
                 grid_step_deg=grid_step_deg,
