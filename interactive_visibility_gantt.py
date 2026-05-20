@@ -13,10 +13,12 @@ notebook after enabling an interactive matplotlib backend, for example:
 from __future__ import annotations
 
 import io
+import os
+import tempfile
 import warnings
+from pathlib import Path
 
 import ipywidgets as widgets
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from astropy import units as u
@@ -25,9 +27,24 @@ from astropy.time import Time
 from astropy.utils.exceptions import AstropyWarning
 from IPython.display import Image as IPyImage
 from IPython.display import clear_output, display
-from matplotlib.dates import DateFormatter, MonthLocator, date2num
 
 from tgt_vis import compute_visibility
+
+
+def _prepare_matplotlib_cache():
+    """Use a writable cache in locked-down environments."""
+    cache_root = Path(tempfile.gettempdir()) / "rtvt-matplotlib"
+    xdg_cache_root = Path(tempfile.gettempdir()) / "rtvt-cache"
+    cache_root.mkdir(parents=True, exist_ok=True)
+    xdg_cache_root.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("MPLCONFIGDIR", str(cache_root))
+    os.environ.setdefault("XDG_CACHE_HOME", str(xdg_cache_root))
+
+
+_prepare_matplotlib_cache()
+
+import matplotlib.pyplot as plt
+from matplotlib.dates import DateFormatter, MonthLocator, date2num
 
 
 def to_deg(series):
