@@ -60,12 +60,7 @@ roman_tvt = "rtvt.cli:main"
 rtvt-gui = "rtvt.gui:main"
 
 [tool.setuptools]
-packages = ["rtvt"]
-py-modules = [
-  "tgt_vis",
-  "interactive_visibility_gantt",
-  "roman_visibility_3d",
-]
+packages = ["rtvt", "rtvt.visualization"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
