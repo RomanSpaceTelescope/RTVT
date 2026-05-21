@@ -175,19 +175,12 @@ The GUI opens as a normal desktop window. Close the window when you are done.
 
 ## Python API
 
-The package keeps the original module names available for notebook
-compatibility:
+All public entry points live under the `rtvt` package:
 
 ```python
-from tgt_vis import compute_visibility
-from interactive_visibility_gantt import launch_interactive_sky_gantt
-from roman_visibility_3d import roman_suntrack_3d
-```
-
-The packaged wrapper also exposes the core calculator:
-
-```python
-from rtvt import compute_visibility
+from rtvt import VisibilityCalculator
+from rtvt.notebook import launch_interactive_sky_gantt
+from rtvt.visualization.suntrack3d import roman_suntrack_3d
 ```
 
 ## Notebook Usage
@@ -196,7 +189,7 @@ In a notebook using the RTVT environment:
 
 ```python
 %matplotlib widget
-from interactive_visibility_gantt import launch_interactive_sky_gantt_with_controls
+from rtvt.notebook import launch_interactive_sky_gantt_with_controls
 
 viewer = launch_interactive_sky_gantt_with_controls(
     grid_step_deg=10,
