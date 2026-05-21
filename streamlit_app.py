@@ -155,6 +155,32 @@ def mollweide_inverse(x_value: float, y_value: float) -> tuple[float, float]:
     return lon_deg % 360.0, lat_deg
 
 
+def customdata_value(customdata, index: int):
+    """Return a Plotly customdata value from list-like or dict-like Streamlit payloads."""
+    if customdata is None:
+        return None
+    if isinstance(customdata, dict):
+        return customdata.get(index, customdata.get(str(index)))
+    try:
+        return customdata[index]
+    except (IndexError, KeyError, TypeError):
+        return None
+
+
+def selection_point_lon_lat(point) -> tuple[float, float]:
+    """Extract sky coordinates from a Streamlit Plotly selection point."""
+    customdata = point.get("customdata") if hasattr(point, "get") else None
+    custom_lon = customdata_value(customdata, 0)
+    custom_lat = customdata_value(customdata, 1)
+    if custom_lon is not None and custom_lat is not None:
+        return float(custom_lon), float(custom_lat)
+
+    return mollweide_inverse(
+        float(point.get("x", 0.0)),
+        float(point.get("y", 0.0)),
+    )
+
+
 def mollweide_visibility_raster(
     lon_grid_deg: np.ndarray,
     lat_grid_deg: np.ndarray,
@@ -476,15 +502,7 @@ map_event = st.plotly_chart(
 # Click → add target (deduped against last processed click).
 if map_event and map_event.selection and map_event.selection.points:
     pt = map_event.selection.points[0]
-    # Prefer customdata (original [0, 360) lon); fall back to lon/lat fields.
-    if "customdata" in pt and pt["customdata"] is not None:
-        click_lon = float(pt["customdata"][0])
-        click_lat = float(pt["customdata"][1])
-    else:
-        click_lon, click_lat = mollweide_inverse(
-            float(pt.get("x", 0.0)),
-            float(pt.get("y", 0.0)),
-        )
+    click_lon, click_lat = selection_point_lon_lat(pt)
     click_key = (round(click_lon, 4), round(click_lat, 4))
     if st.session_state.last_click_key != click_key:
         st.session_state.last_click_key = click_key
