@@ -56,7 +56,7 @@ def sampled_times_for_interval(
     return t_start + np.arange(0.0, duration_days, sampling_days) * u.d
 
 
-class compute_visibility:
+class VisibilityCalculator:
     """Compute Roman field-of-regard visibility for one or more fixed targets."""
 
     def __init__(
