@@ -34,8 +34,8 @@ from rtvt.visualization.timeseries import make_visibility_plot
 DURATION_DAYS = 365
 SAMPLING_DAYS = 1
 GRID_STEP_DEG = 10
-CLICK_STEP_DEG = 1
-APP_BUILD_LABEL = "streamlit-app 1-degree click grid, 2026-05-21"
+CLICK_STEP_DEG = 3
+APP_BUILD_LABEL = "streamlit-app 3-degree click grid, 2026-05-21"
 
 
 # --- Streamlit page setup ---------------------------------------------------
