@@ -195,7 +195,14 @@ ra_grid_deg, dec_grid_deg, vis_frac_2d = _cached_sky_grid(
     coord_system, DURATION_DAYS, SAMPLING_DAYS, GRID_STEP_DEG
 )
 
-# Shift to [-180, 180] longitude for a more conventional sky plot.
+# Shift to [-180, 180] longitude for display. The heatmap gives the complete
+# all-sky background, while the nearly transparent marker trace gives
+# Streamlit actual selectable points for click-to-add behavior.
+ra_mesh, dec_mesh = np.meshgrid(ra_grid_deg, dec_grid_deg)
+ra_flat = ra_mesh.ravel()
+dec_flat = dec_mesh.ravel()
+vis_flat = vis_frac_2d.ravel()
+ra_flat_plot = np.where(ra_flat > 180, ra_flat - 360, ra_flat)
 ra_shifted = np.where(ra_grid_deg > 180, ra_grid_deg - 360, ra_grid_deg)
 sort_idx = np.argsort(ra_shifted)
 ra_sorted = ra_shifted[sort_idx]
@@ -216,37 +223,78 @@ sky_fig.add_trace(
             f"{lon_label}=%{{x:.1f}}°<br>{lat_label}=%{{y:.1f}}°"
             "<br>Visible: %{z:.1%}<extra></extra>"
         ),
+        name="visibility fraction",
+        showlegend=False,
+    )
+)
+
+sky_fig.add_trace(
+    go.Scatter(
+        x=ra_flat_plot,
+        y=dec_flat,
+        mode="markers",
+        marker=dict(
+            color="rgba(0,0,0,0.01)",
+            size=22,
+            symbol="square",
+            line=dict(width=0),
+        ),
+        customdata=np.column_stack([ra_flat, dec_flat]),  # original [0, 360) lon
+        hovertemplate=(
+            f"{lon_label}=%{{customdata[0]:.1f}}°"
+            f"<br>{lat_label}=%{{customdata[1]:.1f}}°"
+            "<extra></extra>"
+        ),
+        name="click target grid",
+        showlegend=False,
     )
 )
 
 # Overlay markers for already-selected targets.
-for i, item in enumerate(st.session_state.selected_targets):
-    plot_lon = item["coord_lon_deg"]
-    if plot_lon > 180:
-        plot_lon -= 360
+if st.session_state.selected_targets:
+    sel_lon = []
+    sel_lat = []
+    sel_text = []
+    sel_color = []
+    sel_hover = []
+    for i, item in enumerate(st.session_state.selected_targets):
+        plot_lon = item["coord_lon_deg"]
+        if plot_lon > 180:
+            plot_lon -= 360
+        sel_lon.append(plot_lon)
+        sel_lat.append(item["coord_lat_deg"])
+        sel_text.append(str(i + 1))
+        sel_color.append(item["color"])
+        sel_hover.append(
+            f"<b>{html.escape(item['display_label'])}</b>"
+            f"<br>Vis: {item['vis_fraction']*100:.1f}%"
+        )
     sky_fig.add_trace(
         go.Scatter(
-            x=[plot_lon],
-            y=[item["coord_lat_deg"]],
+            x=sel_lon,
+            y=sel_lat,
             mode="markers+text",
-            text=[str(i + 1)],
+            text=sel_text,
             textposition="top right",
-            textfont=dict(color=item["color"], size=14),
+            textfont=dict(color=sel_color, size=14),
             marker=dict(
-                color=item["color"],
+                color=sel_color,
                 size=16,
                 symbol="x-thin",
-                line=dict(width=3, color=item["color"]),
+                line=dict(width=3, color=sel_color),
             ),
-            name=f"{i + 1}: {item['display_label']}",
-            hovertemplate=f"<b>{html.escape(item['display_label'])}</b><br>Vis: {item['vis_fraction']*100:.1f}%<extra></extra>",
+            hovertemplate=[f"{h}<extra></extra>" for h in sel_hover],
+            name="selected",
             showlegend=False,
         )
     )
 
 sky_fig.update_layout(
     title=dict(
-        text=f"All-Sky Visibility Fraction ({coord_title}) — click to add a target",
+        text=(
+            f"All-Sky Visibility Fraction ({coord_title}) — "
+            "click a cell to add a target"
+        ),
         x=0.5,
         xanchor="center",
     ),
@@ -255,16 +303,20 @@ sky_fig.update_layout(
         range=[-180, 180],
         showgrid=True,
         gridcolor="rgba(150,150,150,0.25)",
+        zeroline=False,
     ),
     yaxis=dict(
         title=f"{lat_label} (deg)",
         range=[-90, 90],
         showgrid=True,
         gridcolor="rgba(150,150,150,0.25)",
+        zeroline=False,
     ),
     margin=dict(l=40, r=20, t=60, b=40),
-    height=480,
+    height=520,
     plot_bgcolor="white",
+    clickmode="event+select",
+    dragmode=False,
 )
 
 map_event = st.plotly_chart(
@@ -278,11 +330,15 @@ map_event = st.plotly_chart(
 # Click → add target (deduped against last processed click).
 if map_event and map_event.selection and map_event.selection.points:
     pt = map_event.selection.points[0]
-    click_lon = float(pt["x"])
-    click_lat = float(pt["y"])
-    # Convert back to [0, 360) for storage consistency with the rest of the app.
-    if click_lon < 0:
-        click_lon += 360.0
+    # Prefer customdata (original [0, 360) lon); fall back to lon/lat fields.
+    if "customdata" in pt and pt["customdata"] is not None:
+        click_lon = float(pt["customdata"][0])
+        click_lat = float(pt["customdata"][1])
+    else:
+        click_lon = float(pt.get("x", 0.0))
+        click_lat = float(pt.get("y", 0.0))
+        if click_lon < 0:
+            click_lon += 360.0
     click_key = (round(click_lon, 4), round(click_lat, 4))
     if st.session_state.last_click_key != click_key:
         st.session_state.last_click_key = click_key

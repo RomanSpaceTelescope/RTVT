@@ -426,6 +426,10 @@ def launch_interactive_sky_gantt(
         layout=widgets.Layout(align_items="flex-start"),
     )
     display(map_box)
+    # The canvas is displayed explicitly inside ``map_box``. Closing the
+    # pyplot manager here prevents notebook backends from auto-rendering the
+    # same figure a second time at the bottom of the cell.
+    plt.close(fig_sky)
     display(status_label)
     display(plots_output)
     display(widgets.HBox([report_button, report_status], layout=widgets.Layout(margin="12px 0 0 0")))
