@@ -39,6 +39,10 @@ interactive = [
 plot3d = [
   "plotly>=5",
 ]
+web = [
+  "streamlit>=1.28",
+  "plotly>=5",
+]
 test = [
   "pytest>=7",
 ]
@@ -48,6 +52,7 @@ all = [
   "ipython>=8",
   "ipywidgets>=8",
   "plotly>=5",
+  "streamlit>=1.28",
 ]
 
 [project.urls]
