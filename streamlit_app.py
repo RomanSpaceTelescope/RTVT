@@ -34,7 +34,7 @@ from rtvt.visualization.timeseries import make_visibility_plot
 DURATION_DAYS = 365
 SAMPLING_DAYS = 1
 GRID_STEP_DEG = 10
-APP_BUILD_LABEL = "streamlit-app map fix, 2026-05-21"
+APP_BUILD_LABEL = "streamlit-app Mollweide map fix, 2026-05-21"
 
 
 # --- Streamlit page setup ---------------------------------------------------
@@ -103,6 +103,132 @@ def pd_doy_to_datetime(df):
     import pandas as pd
 
     return pd.to_datetime(df.index.astype(str), format="%Y-%j.%f")
+
+
+def mollweide_project(lon_deg, lat_deg):
+    """Project longitude/latitude in degrees into Mollweide x/y coordinates."""
+    lon_rad = np.deg2rad(np.asarray(lon_deg, dtype=float))
+    lat_rad = np.deg2rad(np.asarray(lat_deg, dtype=float))
+    theta = lat_rad.copy()
+    pole_mask = np.isclose(np.abs(lat_rad), np.pi / 2)
+
+    for _ in range(10):
+        numerator = 2 * theta + np.sin(2 * theta) - np.pi * np.sin(lat_rad)
+        denominator = 2 + 2 * np.cos(2 * theta)
+        step = np.divide(
+            numerator,
+            denominator,
+            out=np.zeros_like(theta, dtype=float),
+            where=np.abs(denominator) > 1e-12,
+        )
+        theta = theta - step
+
+    theta = np.where(pole_mask, np.sign(lat_rad) * np.pi / 2, theta)
+    x = (2 * np.sqrt(2) / np.pi) * lon_rad * np.cos(theta)
+    y = np.sqrt(2) * np.sin(theta)
+    return x, y
+
+
+def mollweide_inverse_projected(x_value, y_value):
+    """Convert Mollweide x/y coordinates back to lon/lat degrees."""
+    x_array = np.asarray(x_value, dtype=float)
+    y_array = np.asarray(y_value, dtype=float)
+    theta = np.arcsin(np.clip(y_array / np.sqrt(2), -1, 1))
+    lat_rad = np.arcsin(np.clip((2 * theta + np.sin(2 * theta)) / np.pi, -1, 1))
+    cos_theta = np.cos(theta)
+    lon_rad = np.divide(
+        x_array * np.pi,
+        2 * np.sqrt(2) * cos_theta,
+        out=np.zeros_like(x_array, dtype=float),
+        where=np.abs(cos_theta) > 1e-12,
+    )
+    return np.rad2deg(lon_rad), np.rad2deg(lat_rad)
+
+
+def mollweide_inverse(x_value: float, y_value: float) -> tuple[float, float]:
+    """Convert one Mollweide x/y point back to lon/lat degrees."""
+    lon_deg, lat_deg = mollweide_inverse_projected(x_value, y_value)
+    lon_deg = float(lon_deg)
+    lat_deg = float(lat_deg)
+    if lon_deg < 0:
+        lon_deg += 360.0
+    return lon_deg % 360.0, lat_deg
+
+
+def mollweide_visibility_raster(
+    lon_grid_deg: np.ndarray,
+    lat_grid_deg: np.ndarray,
+    vis_frac_2d: np.ndarray,
+    width: int = 361,
+    height: int = 181,
+):
+    """Resample the coarse visibility grid onto a regular Mollweide image."""
+    x_values = np.linspace(-2 * np.sqrt(2), 2 * np.sqrt(2), width)
+    y_values = np.linspace(-np.sqrt(2), np.sqrt(2), height)
+    x_mesh, y_mesh = np.meshgrid(x_values, y_values)
+    inside = (x_mesh / (2 * np.sqrt(2))) ** 2 + (y_mesh / np.sqrt(2)) ** 2 <= 1
+
+    lon_plot_deg, lat_deg = mollweide_inverse_projected(x_mesh, y_mesh)
+    lon_original_deg = np.where(lon_plot_deg < 0, lon_plot_deg + 360.0, lon_plot_deg) % 360.0
+
+    lon_distance = np.abs(
+        ((lon_original_deg[..., np.newaxis] - lon_grid_deg[np.newaxis, np.newaxis, :] + 180) % 360)
+        - 180
+    )
+    lat_distance = np.abs(lat_deg[..., np.newaxis] - lat_grid_deg[np.newaxis, np.newaxis, :])
+    lon_indices = np.argmin(lon_distance, axis=2)
+    lat_indices = np.argmin(lat_distance, axis=2)
+
+    raster = vis_frac_2d[lat_indices, lon_indices]
+    raster = np.where(inside, raster, np.nan)
+    return x_values, y_values, raster
+
+
+def add_mollweide_grid(fig: go.Figure) -> None:
+    """Draw notebook-like Mollweide grid lines and oval boundary."""
+    line_style = dict(color="rgba(90, 96, 110, 0.28)", width=1)
+
+    for lat in range(-60, 61, 30):
+        lon_values = np.linspace(-180, 180, 361)
+        lat_values = np.full_like(lon_values, lat, dtype=float)
+        x_values, y_values = mollweide_project(lon_values, lat_values)
+        fig.add_trace(
+            go.Scatter(
+                x=x_values,
+                y=y_values,
+                mode="lines",
+                line=line_style,
+                hoverinfo="skip",
+                showlegend=False,
+            )
+        )
+
+    for lon in range(-150, 180, 30):
+        lat_values = np.linspace(-89.9, 89.9, 360)
+        lon_values = np.full_like(lat_values, lon, dtype=float)
+        x_values, y_values = mollweide_project(lon_values, lat_values)
+        fig.add_trace(
+            go.Scatter(
+                x=x_values,
+                y=y_values,
+                mode="lines",
+                line=line_style,
+                hoverinfo="skip",
+                showlegend=False,
+            )
+        )
+
+    theta = np.linspace(0, 2 * np.pi, 361)
+    fig.add_trace(
+        go.Scatter(
+            x=2 * np.sqrt(2) * np.cos(theta),
+            y=np.sqrt(2) * np.sin(theta),
+            mode="lines",
+            line=dict(color="rgba(40, 45, 56, 0.45)", width=1),
+            hoverinfo="skip",
+            showlegend=False,
+        )
+    )
 
 
 # --- Sidebar ----------------------------------------------------------------
@@ -197,54 +323,56 @@ ra_grid_deg, dec_grid_deg, vis_frac_2d = _cached_sky_grid(
     coord_system, DURATION_DAYS, SAMPLING_DAYS, GRID_STEP_DEG
 )
 
-# Shift to [-180, 180] longitude for display. The heatmap gives the complete
-# all-sky background, while the nearly transparent marker trace gives
-# Streamlit actual selectable points for click-to-add behavior.
+# Project the grid into Mollweide coordinates. The heatmap trace gives the
+# complete notebook-style oval map; the transparent marker trace gives
+# Streamlit selectable points for click-to-add behavior.
 ra_mesh, dec_mesh = np.meshgrid(ra_grid_deg, dec_grid_deg)
 ra_flat = ra_mesh.ravel()
 dec_flat = dec_mesh.ravel()
 vis_flat = vis_frac_2d.ravel()
-ra_flat_plot = np.where(ra_flat > 180, ra_flat - 360, ra_flat)
-ra_shifted = np.where(ra_grid_deg > 180, ra_grid_deg - 360, ra_grid_deg)
-sort_idx = np.argsort(ra_shifted)
-ra_sorted = ra_shifted[sort_idx]
-vis_frac_sorted = vis_frac_2d[:, sort_idx]
+lon_flat_plot = np.where(ra_flat > 180, ra_flat - 360, ra_flat)
+map_x, map_y = mollweide_project(lon_flat_plot, dec_flat)
+raster_x, raster_y, raster_visibility = mollweide_visibility_raster(
+    ra_grid_deg,
+    dec_grid_deg,
+    vis_frac_2d,
+)
 
 sky_fig = go.Figure()
 
 sky_fig.add_trace(
     go.Heatmap(
-        x=ra_sorted,
-        y=dec_grid_deg,
-        z=vis_frac_sorted,
+        x=raster_x,
+        y=raster_y,
+        z=raster_visibility,
         colorscale="RdYlGn",
         zmin=0,
         zmax=1,
         colorbar=dict(title="Vis frac<br>(of year)", thickness=14, len=0.7),
-        hovertemplate=(
-            f"{lon_label}=%{{x:.1f}}°<br>{lat_label}=%{{y:.1f}}°"
-            "<br>Visible: %{z:.1%}<extra></extra>"
-        ),
+        hoverinfo="skip",
         name="visibility fraction",
         showlegend=False,
     )
 )
 
+add_mollweide_grid(sky_fig)
+
 sky_fig.add_trace(
     go.Scatter(
-        x=ra_flat_plot,
-        y=dec_flat,
+        x=map_x,
+        y=map_y,
         mode="markers",
         marker=dict(
             color="rgba(0,0,0,0.01)",
-            size=22,
+            size=28,
             symbol="square",
             line=dict(width=0),
         ),
-        customdata=np.column_stack([ra_flat, dec_flat]),  # original [0, 360) lon
+        customdata=np.column_stack([ra_flat, dec_flat, vis_flat]),  # original [0, 360) lon
         hovertemplate=(
             f"{lon_label}=%{{customdata[0]:.1f}}°"
             f"<br>{lat_label}=%{{customdata[1]:.1f}}°"
+            "<br>Visible: %{customdata[2]:.1%}"
             "<extra></extra>"
         ),
         name="click target grid",
@@ -254,27 +382,30 @@ sky_fig.add_trace(
 
 # Overlay markers for already-selected targets.
 if st.session_state.selected_targets:
-    sel_lon = []
-    sel_lat = []
+    sel_x = []
+    sel_y = []
     sel_text = []
     sel_color = []
     sel_hover = []
+    sel_customdata = []
     for i, item in enumerate(st.session_state.selected_targets):
         plot_lon = item["coord_lon_deg"]
         if plot_lon > 180:
             plot_lon -= 360
-        sel_lon.append(plot_lon)
-        sel_lat.append(item["coord_lat_deg"])
+        projected_x, projected_y = mollweide_project(plot_lon, item["coord_lat_deg"])
+        sel_x.append(float(projected_x))
+        sel_y.append(float(projected_y))
         sel_text.append(str(i + 1))
         sel_color.append(item["color"])
+        sel_customdata.append([item["coord_lon_deg"], item["coord_lat_deg"]])
         sel_hover.append(
             f"<b>{html.escape(item['display_label'])}</b>"
             f"<br>Vis: {item['vis_fraction']*100:.1f}%"
         )
     sky_fig.add_trace(
         go.Scatter(
-            x=sel_lon,
-            y=sel_lat,
+            x=sel_x,
+            y=sel_y,
             mode="markers+text",
             text=sel_text,
             textposition="top right",
@@ -285,6 +416,7 @@ if st.session_state.selected_targets:
                 symbol="x-thin",
                 line=dict(width=3, color=sel_color),
             ),
+            customdata=sel_customdata,
             hovertemplate=[f"{h}<extra></extra>" for h in sel_hover],
             name="selected",
             showlegend=False,
@@ -302,20 +434,32 @@ sky_fig.update_layout(
     ),
     xaxis=dict(
         title=f"{lon_label} (deg)",
-        range=[-180, 180],
-        showgrid=True,
-        gridcolor="rgba(150,150,150,0.25)",
+        range=[-3.05, 3.05],
+        showgrid=False,
         zeroline=False,
+        tickmode="array",
+        tickvals=[
+            float(mollweide_project(lon, 0)[0])
+            for lon in (-150, -100, -50, 0, 50, 100, 150)
+        ],
+        ticktext=["-150", "-100", "-50", "0", "50", "100", "150"],
     ),
     yaxis=dict(
         title=f"{lat_label} (deg)",
-        range=[-90, 90],
-        showgrid=True,
-        gridcolor="rgba(150,150,150,0.25)",
+        range=[-1.58, 1.58],
+        showgrid=False,
         zeroline=False,
+        scaleanchor="x",
+        scaleratio=1,
+        tickmode="array",
+        tickvals=[
+            float(mollweide_project(0, lat)[1])
+            for lat in (-60, -30, 0, 30, 60)
+        ],
+        ticktext=["-60", "-30", "0", "30", "60"],
     ),
     margin=dict(l=40, r=20, t=60, b=40),
-    height=520,
+    height=560,
     plot_bgcolor="white",
     clickmode="event+select",
     dragmode=False,
@@ -337,10 +481,10 @@ if map_event and map_event.selection and map_event.selection.points:
         click_lon = float(pt["customdata"][0])
         click_lat = float(pt["customdata"][1])
     else:
-        click_lon = float(pt.get("x", 0.0))
-        click_lat = float(pt.get("y", 0.0))
-        if click_lon < 0:
-            click_lon += 360.0
+        click_lon, click_lat = mollweide_inverse(
+            float(pt.get("x", 0.0)),
+            float(pt.get("y", 0.0)),
+        )
     click_key = (round(click_lon, 4), round(click_lat, 4))
     if st.session_state.last_click_key != click_key:
         st.session_state.last_click_key = click_key
