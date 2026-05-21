@@ -2,13 +2,16 @@ import astropy.units as u
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
 
-from rtvt import compute_visibility
-from rtvt.cli import build_parser, format_summary, parse_target, run_visibility, summarize_windows, write_report
+from rtvt import VisibilityCalculator
+from rtvt.analysis import format_summary, summarize_windows
+from rtvt.cli import build_parser, run_visibility
+from rtvt.coords import parse_target
+from rtvt.reports import write_report
 
 
-def test_compute_visibility_returns_expected_columns():
+def test_visibility_calculator_returns_expected_columns():
     target = SkyCoord("06h00m00s", "-01d00m00s", frame="icrs")
-    vis = compute_visibility(
+    vis = VisibilityCalculator(
         target,
         report=False,
         fileout=None,
@@ -112,7 +115,7 @@ def test_duplicate_transformed_target_labels_are_unique():
     first = SkyCoord(l=0 * u.deg, b=90 * u.deg, frame="galactic")
     second = SkyCoord(l=90 * u.deg, b=90 * u.deg, frame="galactic")
 
-    vis = compute_visibility(
+    vis = VisibilityCalculator(
         [first, second],
         report=False,
         interval_start_time=Time("2024-01-01T00:00:00"),
