@@ -34,6 +34,7 @@ from rtvt.visualization.timeseries import make_visibility_plot
 DURATION_DAYS = 365
 SAMPLING_DAYS = 1
 GRID_STEP_DEG = 10
+APP_BUILD_LABEL = "streamlit-app map fix, 2026-05-21"
 
 
 # --- Streamlit page setup ---------------------------------------------------
@@ -109,6 +110,7 @@ def pd_doy_to_datetime(df):
 with st.sidebar:
     st.title("RTVT")
     st.caption("Roman Target Visibility Tool")
+    st.caption(f"Build: {APP_BUILD_LABEL}")
 
     coord_system = st.radio(
         "Coordinate system",
