@@ -35,7 +35,15 @@ DURATION_DAYS = 365
 SAMPLING_DAYS = 1
 GRID_STEP_DEG = 10
 CLICK_STEP_DEG = 3
-APP_BUILD_LABEL = "streamlit-app 3-degree click grid, 2026-05-21"
+APP_BUILD_LABEL = "streamlit-app target-name lookup, 2026-05-21"
+
+TARGET_NAME_ALIASES = {
+    "andromeda": "M31",
+    "andromeda galaxy": "M31",
+}
+LOCAL_TARGET_COORDS = {
+    "m31": ("M31", 10.6847083, 41.26875),
+}
 
 
 # --- Streamlit page setup ---------------------------------------------------
@@ -98,6 +106,32 @@ def _cached_target_visibility(
     good = df["good_angles"].astype(bool).values
     separation = quantity_series_to_deg(df["separation"])
     return label, dates, good, separation
+
+
+@st.cache_data(show_spinner="Resolving target name…")
+def _cached_resolve_target_name(target_name: str):
+    cleaned_name = " ".join(str(target_name).strip().split())
+    if not cleaned_name:
+        raise ValueError("Enter a target name first.")
+
+    lookup_name = TARGET_NAME_ALIASES.get(cleaned_name.casefold(), cleaned_name)
+    local_target = LOCAL_TARGET_COORDS.get(lookup_name.casefold())
+    if local_target is not None:
+        resolved_name, ra_deg, dec_deg = local_target
+        return {
+            "input_name": cleaned_name,
+            "lookup_name": resolved_name,
+            "ra_deg": ra_deg,
+            "dec_deg": dec_deg,
+        }
+
+    sky = SkyCoord.from_name(lookup_name).icrs
+    return {
+        "input_name": cleaned_name,
+        "lookup_name": lookup_name,
+        "ra_deg": float(sky.ra.deg),
+        "dec_deg": float(sky.dec.deg),
+    }
 
 
 def pd_doy_to_datetime(df):
@@ -292,8 +326,9 @@ lon_label, lat_label, coord_title = coordinate_labels(coord_system)
 
 st.title("Roman Target Visibility Tool")
 st.caption(
-    f"Click anywhere on the sky map below — or enter coordinates manually — "
-    f"to compute visibility for that target. Currently using "
+    f"Click anywhere on the sky map below, search by target name, "
+    f"or enter coordinates manually to compute visibility for that target. "
+    f"Currently using "
     f"**{coord_title}** coordinates."
 )
 
@@ -301,7 +336,14 @@ st.caption(
 # --- Helpers ----------------------------------------------------------------
 
 
-def _add_target(lon_deg: float, lat_deg: float):
+def _active_lon_lat_from_icrs(ra_deg: float, dec_deg: float, coord_system: str):
+    sky = SkyCoord(ra=ra_deg * u.deg, dec=dec_deg * u.deg, frame="icrs")
+    if normalize_coordinate_system(coord_system) == "galactic":
+        return float(sky.galactic.l.deg), float(sky.galactic.b.deg)
+    return float(ra_deg) % 360.0, float(dec_deg)
+
+
+def _add_target(lon_deg: float, lat_deg: float, display_label=None):
     """Compute visibility for (lon, lat) in the active coord system and append to state."""
     coord_system = normalize_coordinate_system(st.session_state.coordinate_system)
     sky = skycoord_from_lon_lat(lon_deg, lat_deg, coord_system)
@@ -321,9 +363,9 @@ def _add_target(lon_deg: float, lat_deg: float):
     )
     is_cvz, vis_fraction, _ = check_cvz_status(df_for_cvz)
 
-    lon_lat_label = (
-        f"{lon_label}={lon_deg:.4f}, {lat_label}={lat_deg:.4f}"
-    )
+    lon_lat_label = f"{lon_label}={lon_deg:.4f}, {lat_label}={lat_deg:.4f}"
+    if display_label:
+        lon_lat_label = display_label
 
     color = target_color(len(st.session_state.selected_targets))
     st.session_state.selected_targets.append(
@@ -343,6 +385,14 @@ def _add_target(lon_deg: float, lat_deg: float):
             color=color,
         )
     )
+
+
+def _target_name_display_label(resolved_target: dict) -> str:
+    input_name = resolved_target["input_name"]
+    lookup_name = resolved_target["lookup_name"]
+    if input_name.casefold() == lookup_name.casefold():
+        return input_name
+    return f"{input_name} ({lookup_name})"
 
 
 # --- All-sky map ------------------------------------------------------------
@@ -512,7 +562,34 @@ if map_event and map_event.selection and map_event.selection.points:
         st.rerun()
 
 
-# --- Manual entry -----------------------------------------------------------
+# --- Name / manual entry ----------------------------------------------------
+
+with st.expander("Search by target name", expanded=True):
+    name_cols = st.columns([2, 1])
+    with name_cols[0]:
+        target_name = st.text_input(
+            "Target name",
+            placeholder="Andromeda, M31, Vega",
+            key="target_name_lookup",
+        )
+    with name_cols[1]:
+        st.write("")  # vertical padding
+        if st.button("Add named target", type="primary", use_container_width=True):
+            try:
+                resolved = _cached_resolve_target_name(target_name)
+                name_lon, name_lat = _active_lon_lat_from_icrs(
+                    resolved["ra_deg"],
+                    resolved["dec_deg"],
+                    coord_system,
+                )
+                _add_target(
+                    name_lon,
+                    name_lat,
+                    display_label=_target_name_display_label(resolved),
+                )
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Could not resolve target name: {exc}")
 
 with st.expander("Enter exact coordinates", expanded=False):
     manual_cols = st.columns([1, 1, 1])
@@ -548,7 +625,7 @@ with st.expander("Enter exact coordinates", expanded=False):
 selected = st.session_state.selected_targets
 
 if not selected:
-    st.info("No targets selected yet. Click the sky map above or use the manual entry to add one.")
+    st.info("No targets selected yet. Click the sky map above, search by name, or use manual entry.")
     st.stop()
 
 
