@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import os
-import tempfile
 from argparse import Namespace
 from pathlib import Path
 import tkinter as tk
@@ -13,22 +11,14 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from rtvt.utils import prepare_matplotlib_cache
 
-def _prepare_gui_environment() -> None:
-    cache_root = Path(tempfile.gettempdir()) / "rtvt-matplotlib"
-    xdg_cache_root = Path(tempfile.gettempdir()) / "rtvt-cache"
-    cache_root.mkdir(parents=True, exist_ok=True)
-    xdg_cache_root.mkdir(parents=True, exist_ok=True)
-    os.environ.setdefault("MPLCONFIGDIR", str(cache_root))
-    os.environ.setdefault("XDG_CACHE_HOME", str(xdg_cache_root))
-
-
-_prepare_gui_environment()
+prepare_matplotlib_cache()
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 if TYPE_CHECKING:
-    from rtvt.cli import VisibilityResult
+    from rtvt.analysis import VisibilityResult
 
 
 class RTVTGui(tk.Tk):
@@ -296,7 +286,7 @@ class RTVTGui(tk.Tk):
         if self.result is None:
             return
 
-        from rtvt.cli import summarize_windows
+        from rtvt.analysis import summarize_windows
 
         target_name = self.target_name_var.get().strip() or self.result.label
         good = self.result.table["good_angles"].astype(bool).to_numpy()
@@ -314,7 +304,7 @@ class RTVTGui(tk.Tk):
         self._render_plot(target_name)
 
     def _render_summary(self, target_name: str) -> None:
-        from rtvt.cli import format_summary
+        from rtvt.analysis import format_summary
 
         self.summary_text.delete("1.0", tk.END)
         self.summary_text.insert(tk.END, format_summary(self.result, target_name=target_name))
@@ -353,7 +343,7 @@ class RTVTGui(tk.Tk):
             )
 
     def _render_plot(self, target_name: str) -> None:
-        from rtvt.cli import make_plot
+        from rtvt.visualization.timeseries import plot_visibility_result
 
         if self.canvas is not None:
             self.canvas.get_tk_widget().destroy()
@@ -361,7 +351,7 @@ class RTVTGui(tk.Tk):
         if self.plot_placeholder.winfo_ismapped():
             self.plot_placeholder.grid_remove()
 
-        self.figure = make_plot(self.result, target_name=target_name)
+        self.figure = plot_visibility_result(self.result, target_name=target_name)
         self.canvas = FigureCanvasTkAgg(self.figure, master=self.plot_frame)
         self.canvas.draw()
         self.canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
@@ -378,7 +368,7 @@ class RTVTGui(tk.Tk):
         )
         if not path:
             return
-        from rtvt.cli import write_csv
+        from rtvt.reports import write_csv
 
         write_csv(self.result, path)
         self.status_var.set(f"Saved CSV: {Path(path).name}")
@@ -395,9 +385,8 @@ class RTVTGui(tk.Tk):
         )
         if not path:
             return
-        from rtvt.cli import save_plot_figure
-
-        save_plot_figure(self.figure, path)
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self.figure.savefig(path, dpi=150, bbox_inches="tight")
         self.status_var.set(f"Saved plot: {Path(path).name}")
 
     def copy_cli_command(self) -> None:
@@ -436,7 +425,8 @@ class RTVTGui(tk.Tk):
         if not path:
             return
 
-        from rtvt.cli import figure_to_png_bytes, make_html_report
+        from rtvt.reports import make_html_report
+        from rtvt.utils import figure_to_png_bytes
 
         plot_png = figure_to_png_bytes(self.figure) if self.figure is not None else None
         target_name = self.target_name_var.get().strip() or self.result.label
