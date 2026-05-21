@@ -34,7 +34,8 @@ from rtvt.visualization.timeseries import make_visibility_plot
 DURATION_DAYS = 365
 SAMPLING_DAYS = 1
 GRID_STEP_DEG = 10
-APP_BUILD_LABEL = "streamlit-app Mollweide map fix, 2026-05-21"
+CLICK_STEP_DEG = 1
+APP_BUILD_LABEL = "streamlit-app 1-degree click grid, 2026-05-21"
 
 
 # --- Streamlit page setup ---------------------------------------------------
@@ -274,6 +275,7 @@ with st.sidebar:
     st.divider()
     st.caption(f"Interval: {DURATION_DAYS} days, sampling every {SAMPLING_DAYS} day(s)")
     st.caption(f"All-sky grid step: {GRID_STEP_DEG}°")
+    st.caption(f"Map click coordinate step: {CLICK_STEP_DEG}°")
 
     st.divider()
     if st.button("Clear all targets", type="secondary", use_container_width=True):
@@ -351,13 +353,14 @@ ra_grid_deg, dec_grid_deg, vis_frac_2d = _cached_sky_grid(
 
 # Project the grid into Mollweide coordinates. The heatmap trace gives the
 # complete notebook-style oval map; the transparent marker trace gives
-# Streamlit selectable points for click-to-add behavior.
-ra_mesh, dec_mesh = np.meshgrid(ra_grid_deg, dec_grid_deg)
-ra_flat = ra_mesh.ravel()
-dec_flat = dec_mesh.ravel()
-vis_flat = vis_frac_2d.ravel()
-lon_flat_plot = np.where(ra_flat > 180, ra_flat - 360, ra_flat)
-map_x, map_y = mollweide_project(lon_flat_plot, dec_flat)
+# Streamlit selectable points for click-to-add behavior at finer precision.
+click_lon_grid_deg = np.arange(0, 360, CLICK_STEP_DEG)
+click_lat_grid_deg = np.arange(-90, 90 + CLICK_STEP_DEG, CLICK_STEP_DEG)
+click_lon_mesh, click_lat_mesh = np.meshgrid(click_lon_grid_deg, click_lat_grid_deg)
+click_lon_flat = click_lon_mesh.ravel()
+click_lat_flat = click_lat_mesh.ravel()
+click_lon_plot = np.where(click_lon_flat > 180, click_lon_flat - 360, click_lon_flat)
+click_x, click_y = mollweide_project(click_lon_plot, click_lat_flat)
 raster_x, raster_y, raster_visibility = mollweide_visibility_raster(
     ra_grid_deg,
     dec_grid_deg,
@@ -385,20 +388,19 @@ add_mollweide_grid(sky_fig)
 
 sky_fig.add_trace(
     go.Scatter(
-        x=map_x,
-        y=map_y,
+        x=click_x,
+        y=click_y,
         mode="markers",
         marker=dict(
             color="rgba(0,0,0,0.01)",
-            size=28,
+            size=7,
             symbol="square",
             line=dict(width=0),
         ),
-        customdata=np.column_stack([ra_flat, dec_flat, vis_flat]),  # original [0, 360) lon
+        customdata=np.column_stack([click_lon_flat, click_lat_flat]),  # original [0, 360) lon
         hovertemplate=(
             f"{lon_label}=%{{customdata[0]:.1f}}°"
             f"<br>{lat_label}=%{{customdata[1]:.1f}}°"
-            "<br>Visible: %{customdata[2]:.1%}"
             "<extra></extra>"
         ),
         name="click target grid",
