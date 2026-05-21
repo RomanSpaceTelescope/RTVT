@@ -1,0 +1,485 @@
+"""Streamlit web app for the Roman Target Visibility Tool.
+
+Run locally::
+
+    streamlit run streamlit_app.py
+
+Deploys to Streamlit Community Cloud by pointing at this file in the repo.
+"""
+
+from __future__ import annotations
+
+import html
+from datetime import datetime
+
+import numpy as np
+import plotly.graph_objects as go
+import streamlit as st
+from astropy import units as u
+from astropy.coordinates import SkyCoord
+
+from rtvt.analysis import check_cvz_status
+from rtvt.coords import coordinate_labels, normalize_coordinate_system, skycoord_from_lon_lat
+from rtvt.reports import figure_img_html
+from rtvt.sky_grid import get_cached_all_sky_visibility_grid
+from rtvt.utils import quantity_series_to_deg
+from rtvt.visibility import VisibilityCalculator
+from rtvt.visualization.gantt import (
+    make_gantt_chart,
+    make_separation_comparison,
+    target_color,
+)
+from rtvt.visualization.timeseries import make_visibility_plot
+
+DURATION_DAYS = 365
+SAMPLING_DAYS = 1
+GRID_STEP_DEG = 10
+
+
+# --- Streamlit page setup ---------------------------------------------------
+
+st.set_page_config(
+    page_title="RTVT — Roman Target Visibility Tool",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+
+# --- Session state init -----------------------------------------------------
+
+if "selected_targets" not in st.session_state:
+    st.session_state.selected_targets = []
+if "last_click_key" not in st.session_state:
+    st.session_state.last_click_key = None
+if "coordinate_system" not in st.session_state:
+    st.session_state.coordinate_system = "equatorial"
+
+
+# --- Cached compute ---------------------------------------------------------
+
+
+@st.cache_data(show_spinner="Computing all-sky visibility grid…")
+def _cached_sky_grid(
+    coordinate_system: str,
+    duration_days: float,
+    sampling_days: float,
+    grid_step_deg: float,
+):
+    return get_cached_all_sky_visibility_grid(
+        grid_step_deg=grid_step_deg,
+        duration_days=duration_days,
+        sampling_days=sampling_days,
+        coordinate_system=coordinate_system,
+    )
+
+
+@st.cache_data(show_spinner="Computing target visibility…")
+def _cached_target_visibility(
+    ra_deg: float,
+    dec_deg: float,
+    duration_days: float,
+    sampling_days: float,
+):
+    target = SkyCoord(ra=ra_deg * u.deg, dec=dec_deg * u.deg, frame="icrs")
+    vis = VisibilityCalculator(
+        target,
+        report=False,
+        fileout=None,
+        interval_sampling_days=sampling_days,
+        interval_start_time=None,
+        interval_duration_days=duration_days,
+    )
+    vis.compute_and_display()
+    label = vis.df_results.index.levels[0][0]
+    df = vis.df_results.xs(label, level=0)
+    dates = pd_doy_to_datetime(df)
+    good = df["good_angles"].astype(bool).values
+    separation = quantity_series_to_deg(df["separation"])
+    return label, dates, good, separation
+
+
+def pd_doy_to_datetime(df):
+    import pandas as pd
+
+    return pd.to_datetime(df.index.astype(str), format="%Y-%j.%f")
+
+
+# --- Sidebar ----------------------------------------------------------------
+
+with st.sidebar:
+    st.title("RTVT")
+    st.caption("Roman Target Visibility Tool")
+
+    coord_system = st.radio(
+        "Coordinate system",
+        options=("equatorial", "galactic"),
+        format_func=lambda v: "Equatorial (RA/Dec)" if v == "equatorial" else "Galactic (l/b)",
+        key="coordinate_system",
+    )
+
+    st.divider()
+    st.caption(f"Interval: {DURATION_DAYS} days, sampling every {SAMPLING_DAYS} day(s)")
+    st.caption(f"All-sky grid step: {GRID_STEP_DEG}°")
+
+    st.divider()
+    if st.button("Clear all targets", type="secondary", use_container_width=True):
+        st.session_state.selected_targets = []
+        st.session_state.last_click_key = None
+        st.rerun()
+
+    st.caption(f"Selected targets: **{len(st.session_state.selected_targets)}**")
+
+
+# --- Top-of-page title ------------------------------------------------------
+
+lon_label, lat_label, coord_title = coordinate_labels(coord_system)
+
+st.title("Roman Target Visibility Tool")
+st.caption(
+    f"Click anywhere on the sky map below — or enter coordinates manually — "
+    f"to compute visibility for that target. Currently using "
+    f"**{coord_title}** coordinates."
+)
+
+
+# --- Helpers ----------------------------------------------------------------
+
+
+def _add_target(lon_deg: float, lat_deg: float):
+    """Compute visibility for (lon, lat) in the active coord system and append to state."""
+    coord_system = normalize_coordinate_system(st.session_state.coordinate_system)
+    sky = skycoord_from_lon_lat(lon_deg, lat_deg, coord_system)
+    sky_icrs = sky.icrs
+    ra_deg = float(sky_icrs.ra.deg)
+    dec_deg = float(sky_icrs.dec.deg)
+
+    label, dates, good, separation = _cached_target_visibility(
+        ra_deg, dec_deg, DURATION_DAYS, SAMPLING_DAYS
+    )
+
+    # CVZ check needs a DataFrame slice; reconstruct minimal one.
+    import pandas as pd
+
+    df_for_cvz = pd.DataFrame(
+        {"good_angles": good, "separation": separation},
+    )
+    is_cvz, vis_fraction, _ = check_cvz_status(df_for_cvz)
+
+    lon_lat_label = (
+        f"{lon_label}={lon_deg:.4f}, {lat_label}={lat_deg:.4f}"
+    )
+
+    color = target_color(len(st.session_state.selected_targets))
+    st.session_state.selected_targets.append(
+        dict(
+            label=label,
+            display_label=lon_lat_label,
+            coord_system=coord_system,
+            coord_lon_deg=float(lon_deg),
+            coord_lat_deg=float(lat_deg),
+            ra_deg=ra_deg,
+            dec_deg=dec_deg,
+            dates=dates,
+            good=good,
+            separation=separation,
+            is_cvz=bool(is_cvz),
+            vis_fraction=float(vis_fraction),
+            color=color,
+        )
+    )
+
+
+# --- All-sky map ------------------------------------------------------------
+
+ra_grid_deg, dec_grid_deg, vis_frac_2d = _cached_sky_grid(
+    coord_system, DURATION_DAYS, SAMPLING_DAYS, GRID_STEP_DEG
+)
+
+# Shift to [-180, 180] longitude for a more conventional sky plot.
+ra_shifted = np.where(ra_grid_deg > 180, ra_grid_deg - 360, ra_grid_deg)
+sort_idx = np.argsort(ra_shifted)
+ra_sorted = ra_shifted[sort_idx]
+vis_frac_sorted = vis_frac_2d[:, sort_idx]
+
+sky_fig = go.Figure()
+
+sky_fig.add_trace(
+    go.Heatmap(
+        x=ra_sorted,
+        y=dec_grid_deg,
+        z=vis_frac_sorted,
+        colorscale="RdYlGn",
+        zmin=0,
+        zmax=1,
+        colorbar=dict(title="Vis frac<br>(of year)", thickness=14, len=0.7),
+        hovertemplate=(
+            f"{lon_label}=%{{x:.1f}}°<br>{lat_label}=%{{y:.1f}}°"
+            "<br>Visible: %{z:.1%}<extra></extra>"
+        ),
+    )
+)
+
+# Overlay markers for already-selected targets.
+for i, item in enumerate(st.session_state.selected_targets):
+    plot_lon = item["coord_lon_deg"]
+    if plot_lon > 180:
+        plot_lon -= 360
+    sky_fig.add_trace(
+        go.Scatter(
+            x=[plot_lon],
+            y=[item["coord_lat_deg"]],
+            mode="markers+text",
+            text=[str(i + 1)],
+            textposition="top right",
+            textfont=dict(color=item["color"], size=14),
+            marker=dict(
+                color=item["color"],
+                size=16,
+                symbol="x-thin",
+                line=dict(width=3, color=item["color"]),
+            ),
+            name=f"{i + 1}: {item['display_label']}",
+            hovertemplate=f"<b>{html.escape(item['display_label'])}</b><br>Vis: {item['vis_fraction']*100:.1f}%<extra></extra>",
+            showlegend=False,
+        )
+    )
+
+sky_fig.update_layout(
+    title=dict(
+        text=f"All-Sky Visibility Fraction ({coord_title}) — click to add a target",
+        x=0.5,
+        xanchor="center",
+    ),
+    xaxis=dict(
+        title=f"{lon_label} (deg)",
+        range=[-180, 180],
+        showgrid=True,
+        gridcolor="rgba(150,150,150,0.25)",
+    ),
+    yaxis=dict(
+        title=f"{lat_label} (deg)",
+        range=[-90, 90],
+        showgrid=True,
+        gridcolor="rgba(150,150,150,0.25)",
+    ),
+    margin=dict(l=40, r=20, t=60, b=40),
+    height=480,
+    plot_bgcolor="white",
+)
+
+map_event = st.plotly_chart(
+    sky_fig,
+    use_container_width=True,
+    on_select="rerun",
+    selection_mode="points",
+    key="sky_map",
+)
+
+# Click → add target (deduped against last processed click).
+if map_event and map_event.selection and map_event.selection.points:
+    pt = map_event.selection.points[0]
+    click_lon = float(pt["x"])
+    click_lat = float(pt["y"])
+    # Convert back to [0, 360) for storage consistency with the rest of the app.
+    if click_lon < 0:
+        click_lon += 360.0
+    click_key = (round(click_lon, 4), round(click_lat, 4))
+    if st.session_state.last_click_key != click_key:
+        st.session_state.last_click_key = click_key
+        _add_target(click_lon, click_lat)
+        st.rerun()
+
+
+# --- Manual entry -----------------------------------------------------------
+
+with st.expander("Enter exact coordinates", expanded=False):
+    manual_cols = st.columns([1, 1, 1])
+    with manual_cols[0]:
+        manual_lon = st.number_input(
+            f"{lon_label} (degrees)",
+            min_value=0.0,
+            max_value=360.0,
+            value=0.0,
+            step=1.0,
+            format="%.4f",
+            key="manual_lon",
+        )
+    with manual_cols[1]:
+        manual_lat = st.number_input(
+            f"{lat_label} (degrees)",
+            min_value=-90.0,
+            max_value=90.0,
+            value=0.0,
+            step=1.0,
+            format="%.4f",
+            key="manual_lat",
+        )
+    with manual_cols[2]:
+        st.write("")  # vertical padding
+        if st.button("Add target", type="primary", use_container_width=True):
+            _add_target(float(manual_lon), float(manual_lat))
+            st.rerun()
+
+
+# --- Per-target visualizations ---------------------------------------------
+
+selected = st.session_state.selected_targets
+
+if not selected:
+    st.info("No targets selected yet. Click the sky map above or use the manual entry to add one.")
+    st.stop()
+
+
+latest = selected[-1]
+title_suffix = " [CVZ]" if latest["is_cvz"] else ""
+
+st.subheader(f"Latest target: {latest['display_label']}{title_suffix}")
+st.caption(
+    f"Visibility fraction: **{latest['vis_fraction'] * 100:.1f}%** "
+    f"of the {DURATION_DAYS}-day window."
+)
+
+latest_fig = make_visibility_plot(
+    latest["dates"],
+    latest["good"],
+    latest["separation"],
+    visibility_title=(
+        f"Visibility Window — {latest['display_label']}{title_suffix} "
+        f"(vis frac = {latest['vis_fraction'] * 100:.1f}%)"
+    ),
+    separation_title=f"Sun-Target Separation — {latest['display_label']} ({latest['label']})",
+    color=latest["color"],
+    line_width=1.8,
+    fill_color="gray",
+)
+st.pyplot(latest_fig, use_container_width=True)
+
+
+# --- Cumulative gantt + separation comparison ------------------------------
+
+st.subheader("Selected-target Visibility Windows (Gantt; latest target highlighted)")
+gantt_fig = make_gantt_chart(selected)
+st.pyplot(gantt_fig, use_container_width=True)
+
+st.subheader("Selected-target Sun-Target Separation Comparison")
+sep_fig = make_separation_comparison(selected)
+st.pyplot(sep_fig, use_container_width=True)
+
+
+# --- Selected-target table -------------------------------------------------
+
+st.subheader("Selected Targets")
+table_rows = []
+for i, item in enumerate(selected, start=1):
+    icrs = SkyCoord(ra=item["ra_deg"] * u.deg, dec=item["dec_deg"] * u.deg, frame="icrs")
+    table_rows.append(
+        {
+            "#": i,
+            "Input": item["display_label"],
+            "RA deg": round(item["ra_deg"], 6),
+            "Dec deg": round(item["dec_deg"], 6),
+            "Galactic l deg": round(float(icrs.galactic.l.deg), 6),
+            "Galactic b deg": round(float(icrs.galactic.b.deg), 6),
+            "Visible %": round(item["vis_fraction"] * 100, 1),
+            "CVZ": "Yes" if item["is_cvz"] else "No",
+        }
+    )
+st.dataframe(table_rows, hide_index=True, use_container_width=True)
+
+
+# --- Report download -------------------------------------------------------
+
+
+def _build_report_html() -> str:
+    plot_sections = []
+    plot_sections.append(
+        (
+            "Latest Target Visibility",
+            figure_img_html(latest_fig, close=False),
+        )
+    )
+    plot_sections.append(
+        (
+            "Selected-Target Visibility Gantt",
+            figure_img_html(gantt_fig, close=False),
+        )
+    )
+    plot_sections.append(
+        (
+            "All-Target Sun-Target Separation Comparison",
+            figure_img_html(sep_fig, close=False),
+        )
+    )
+
+    sections_html = "\n".join(
+        f'<section><h3>{html.escape(title)}</h3>{img_html}</section>'
+        for title, img_html in plot_sections
+    )
+
+    rows_html = []
+    for i, item in enumerate(selected, start=1):
+        icrs = SkyCoord(ra=item["ra_deg"] * u.deg, dec=item["dec_deg"] * u.deg, frame="icrs")
+        rows_html.append(
+            "<tr>"
+            f"<td>{i}</td>"
+            f"<td style='color:{item['color']}; font-weight: 700;'>"
+            f"{html.escape(item['display_label'])}</td>"
+            f"<td>{item['ra_deg']:.6f}</td>"
+            f"<td>{item['dec_deg']:.6f}</td>"
+            f"<td>{icrs.galactic.l.deg:.6f}</td>"
+            f"<td>{icrs.galactic.b.deg:.6f}</td>"
+            f"<td>{item['vis_fraction'] * 100:.1f}%</td>"
+            f"<td>{'Yes' if item['is_cvz'] else 'No'}</td>"
+            "</tr>"
+        )
+
+    table_html = (
+        "<table><thead><tr>"
+        "<th>#</th><th>Input</th><th>RA deg</th><th>Dec deg</th>"
+        "<th>Galactic l deg</th><th>Galactic b deg</th>"
+        "<th>Visible fraction</th><th>CVZ flag</th>"
+        "</tr></thead><tbody>" + "".join(rows_html) + "</tbody></table>"
+    )
+
+    return f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>RTVT Visibility Report</title>
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 32px; color: #1f2933; }}
+    h1, h2, h3 {{ color: #1e334c; }}
+    .meta {{ color: #53606d; margin-bottom: 18px; }}
+    section {{ margin-top: 22px; }}
+    table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
+    th, td {{ border: 1px solid #ddd; padding: 6px; text-align: left; }}
+    th {{ background: #f4f6f8; }}
+    img {{ max-width: 100%; height: auto; }}
+  </style>
+</head>
+<body>
+  <h1>Roman Target Visibility Tool Report</h1>
+  <div class="meta">
+    Generated {html.escape(datetime.now().isoformat(timespec="seconds"))}<br>
+    Coordinate system: {html.escape(coord_title)}<br>
+    Duration: {DURATION_DAYS} days; sampling: {SAMPLING_DAYS} day(s)
+  </div>
+  <section>
+    <h2>Selected Targets</h2>
+    {table_html}
+  </section>
+  {sections_html}
+</body>
+</html>
+"""
+
+
+st.divider()
+report_html = _build_report_html()
+st.download_button(
+    label="Download HTML report",
+    data=report_html,
+    file_name=f"rtvt_visibility_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
+    mime="text/html",
+    type="primary",
+)
